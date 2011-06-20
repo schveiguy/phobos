@@ -9,7 +9,8 @@ WIKI=Phobos/StdStdio
 Copyright: Copyright Digital Mars 2007-.
 License:   $(WEB boost.org/LICENSE_1_0.txt, Boost License 1.0).
 Authors:   $(WEB digitalmars.com, Walter Bright),
-           $(WEB erdani.org, Andrei Alexandrescu)
+           $(WEB erdani.org, Andrei Alexandrescu),
+           Steven Schveighoffer
  */
 module std.stdio;
 import std.string;
@@ -137,6 +138,16 @@ interface BufferedInput : Seek
      * Close the stream.  This releases any resources from the object.
      */
     void close();
+
+    /**
+     * Begin a read
+     */
+    void begin();
+
+    /**
+     * End a read
+     */
+    void end();
 }
 
 /**
@@ -667,6 +678,16 @@ class DBufferedInput : BufferedInput
         input.close();
         readpos = valid = 0;
     }
+
+    override void begin()
+    {
+        // no specialized code needed.
+    }
+
+    override void end()
+    {
+        // no specialized code needed.
+    }
 }
 
 class DBufferedOutput : BufferedOutput
@@ -1077,6 +1098,7 @@ class CStream : BufferedInput, BufferedOutput
     }
 }
 
+// formatted input stream
 struct FInput
 {
     private BufferedInput input;
@@ -1087,6 +1109,7 @@ struct FInput
     }
 }
 
+// formatted output stream
 struct FOutput
 {
     // public so it can be reassigned.
@@ -1096,10 +1119,15 @@ struct FOutput
     // independent of the data being sent to it.
     private ubyte _charwidth;
 
-    this(CType = char)(BufferedOutput output)
+    this(BufferedOutput output, size_t charwidth)
+    in
+    {
+        assert(charwidth == 1 || charwidth == 2 || charwidth == 4)
+    }
+    body
     {
         this.output = output;
-        this._charwidth = CType.sizeof;
+        this._charwidth = charwidth;
     }
 
     void write(S...)(S args)
@@ -1107,20 +1135,20 @@ struct FOutput
         switch(_charwidth)
         {
         case 1:
-            priv_write!char(args);
+            priv_write!(char, false)(args);
             break;
         case 2:
-            priv_write!wchar(args);
+            priv_write!(wchar, false)(args);
             break;
         case 4:
-            priv_write!dchar(args);
+            priv_write!(dchar, false)(args);
             break;
         default:
             assert(0);
         }
     }
 
-    private void priv_write(C, S...)(S args)
+    private void priv_write(C, bool doFlush, S...)(S args)
     {
         output.begin();
         w = OutputRange!C(output);
@@ -1146,13 +1174,27 @@ struct FOutput
                 std.format.formattedWrite(w, "%s", arg);
             }
         }
+        static if(doFlush)
+            output.flush();
         output.end();
     }
 
     void writeln(S...)(S args)
     {
-        write(args, '\n');
-        output.flush();
+        switch(_charwidth)
+        {
+        case 1:
+            priv_write!(char, true)(args, '\n');
+            break;
+        case 2:
+            priv_write!(wchar, true)(args, '\n');
+            break;
+        case 4:
+            priv_write!(dchar, true)(args, '\n');
+            break;
+        default:
+            assert(0);
+        }
     }
 
     private enum errorMessage =
@@ -1164,21 +1206,58 @@ struct FOutput
     {
         static assert(S.length > 0, errorMessage);
         static assert(isSomeString!(S[0]), errorMessage);
-        std.format.formattedWrite(this, args);
+        switch(_charwidth)
+        {
+        case 1:
+            priv_writef!(char, false)(args);
+            break;
+        case 2:
+            priv_writef!(wchar, false)(args);
+            break;
+        case 4:
+            priv_writef!(dchar, false)(args);
+            break;
+        default:
+            assert(0);
+        }
+    }
+
+    private void priv_writef(C, bool doNewline, S...)(S args)
+    {
+        output.begin();
+        OutputRange!C w;
+        std.format.formattedWrite(w, args);
+        static if(doNewline)
+        {
+            w.put('\n');
+            output.flush();
+        }
+        output.end();
     }
 
     void writefln(S...)(S args)
     {
         static assert(S.length > 0, errorMessage);
         static assert(isSomeString!(S[0]), errorMessage);
-        std.format.formattedWrite(this, args);
-        output.put(cast(const(ubyte)[])"\n");
-        output.flush();
+        switch(_charwidth)
+        {
+        case 1:
+            priv_writef!(char, true)(args);
+            break;
+        case 2:
+            priv_writef!(wchar, true)(args);
+            break;
+        case 4:
+            priv_writef!(dchar, true)(args);
+            break;
+        default:
+            assert(0);
+        }
     }
+
 
     private struct _outputrange(CT)
     {
-        enum _charwidth = CT.sizeof;
         OutputStream output;
 
         this(OutputStream output)
@@ -1193,7 +1272,7 @@ struct FOutput
             else
                 alias ElementType!A C;
             static assert(!is(C == void));
-            if(writeme[0].sizeof == _charwidth)
+            static if(C.sizeof == CT.sizeof)
             {
                 // width is the same size as the stream itself, just paste the text
                 // into the stream.
@@ -1201,6 +1280,7 @@ struct FOutput
             }
             else
             {
+                // convert to dchars, put each one out there.
                 foreach(dchar dc; writeme)
                 {
                     put(dc);
@@ -1210,42 +1290,34 @@ struct FOutput
 
         void put(A)(A c) if(is(A : const(dchar)))
         {
-            immutable cwidth = _charwidth; // so the compiler can optimize
-            if(C.sizeof == cwidth)
+            static if(C.sizeof == CT.sizeof)
             {
                 // output the data directly to the output stream
-                output.put(cast(ubyte[])(&c)[0..1]);
+                output.put(cast(ubyte[])((&c)[0..1]));
             }
             else
             {
-                static if(C.sizeof != 1)
+                static if(CT.sizeof == 1)
                 {
-                    if(cwidth == 1)
-                    {
-                        // convert the character to utf8
-                        char[4] buf = void;
-                        output.put(cast(ubyte[])std.utf.toUTF8(buf, c));
-                    }
+                    // convert the character to utf8
+                    char[4] buf = void;
+                    output.put(cast(ubyte[])std.utf.toUTF8(buf, c));
                 }
-                static if(C.sizeof != 2)
+                else static if(CT.sizeof == 2)
                 {
-                    if(cwidth == 2)
-                    {
-                        // convert the character to utf16
-                        wchar[2] buf = void;
-                        output.put(cast(ubyte[])std.utf.toUTF16(buf, c));
-                    }
+                    // convert the character to utf16
+                    wchar[2] buf = void;
+                    output.put(cast(ubyte[])std.utf.toUTF16(buf, c));
                 }
-                static if(C.sizeof != 4)
+                else static if(CT.sizeof == 4)
                 {
-                    if(cwidth == 4)
-                    {
-                        // converting to utf32, just write directly
-                        auto dchar dc = c;
-                        assert(isValidDchar(dc));
-                        output.put(chast(ubyte[])(&dc)[0..1]);
-                    }
+                    // converting to utf32, just write directly
+                    auto dchar dc = c;
+                    assert(isValidDchar(dc));
+                    output.put(chast(ubyte[])(&dc)[0..1]);
                 }
+                else
+                    static assert(0, "invalid types used for output stream, " ~ CT.stringof ~ ", " ~ C.stringof);
             }
         }
     }
