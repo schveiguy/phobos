@@ -15,7 +15,6 @@ Authors:   $(WEB digitalmars.com, Walter Bright),
 module std.stdio;
 import std.string;
 import std.format;
-//import std.stdio;
 
 version(Posix)
 {
@@ -25,8 +24,8 @@ version(Posix)
     extern(C) ssize_t getdelim (char**, size_t*, int, FILE*);
 }
 
-import std.c.stdio;
-import std.c.string;
+public import core.stdc.stdio;
+import core.stdc.string;
 
 /**
  * Seek anchor.  Used when telling a seek function which anchor to seek from
@@ -130,9 +129,10 @@ interface BufferedInput : Seek
     size_t read(ubyte[] data);
     
     /**
-     * Read data from a stream up to a given delimiter.
+     * Read a line from the stream.  Optionally you can give a line terminator
+     * other than '\n'
      */
-    const(ubyte)[] readDelim(ubyte delim = '\n');
+    const(ubyte)[] readln(ubyte lineterm = '\n');
 
     /**
      * Close the stream.  This releases any resources from the object.
@@ -443,7 +443,7 @@ class DBufferedInput : BufferedInput
         return result;
     }
     
-    final const(ubyte)[] readDelim(ubyte delim = '\n')
+    final const(ubyte)[] readln(ubyte lineterm = '\n')
     {
         size_t _checkDelim(const(ubyte)[] data, size_t start)
         {
@@ -728,7 +728,7 @@ class DBufferedOutput : BufferedOutput
     final void begin()
     in
     {
-        assert(!_noflushcheck)
+        assert(!_noflushcheck);
     }
     body
     {
@@ -1044,7 +1044,7 @@ class CStream : BufferedInput, BufferedOutput
         return result;
     }
 
-    const(ubyte)[] readDelim(ubyte delim = '\n')
+    const(ubyte)[] readln(ubyte lineterm = '\n')
     {
         auto result = .getdelim(&_buf, &_bufsize, delim, source);
         if(result < 0)
@@ -1122,7 +1122,7 @@ struct FOutput
     this(BufferedOutput output, size_t charwidth)
     in
     {
-        assert(charwidth == 1 || charwidth == 2 || charwidth == 4)
+        assert(charwidth == 1 || charwidth == 2 || charwidth == 4);
     }
     body
     {
@@ -1224,6 +1224,8 @@ struct FOutput
 
     private void priv_writef(C, bool doNewline, S...)(S args)
     {
+        static assert(S.length > 0, errorMessage);
+        static assert(isSomeString!(S[0]), errorMessage);
         output.begin();
         OutputRange!C w;
         std.format.formattedWrite(w, args);
@@ -1314,11 +1316,19 @@ struct FOutput
                     // converting to utf32, just write directly
                     auto dchar dc = c;
                     assert(isValidDchar(dc));
-                    output.put(chast(ubyte[])(&dc)[0..1]);
+                    output.put(cast(ubyte[])(&dc)[0..1]);
                 }
                 else
                     static assert(0, "invalid types used for output stream, " ~ CT.stringof ~ ", " ~ C.stringof);
             }
         }
     }
+}
+
+auto openFile(string mode = "r")(string fname)
+{
+    static if(mode == "r")
+        return new DBufferedInput(DStream.open(fname, mode));
+    else
+        static assert(0, "mode not supported for openFile: " ~ mode);
 }
