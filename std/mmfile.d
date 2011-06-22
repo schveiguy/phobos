@@ -81,7 +81,7 @@ class MmFile
         this(filename, Mode.Read, 0, null);
     }
 
-    version(linux) this(File file, Mode mode = Mode.Read, ulong size = 0,
+    version(none) this(File file, Mode mode = Mode.Read, ulong size = 0,
             void* address = null, size_t window = 0)
     {
         this(file.fileno, mode, size, address, window);

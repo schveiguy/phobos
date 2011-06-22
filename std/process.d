@@ -327,6 +327,8 @@ public:
         stdin, stdout, stdout);
     ---
 */
+alias DStream File;
+
 Pid spawnProcess(string command,
     File stdin_ = std.stdio.stdin,
     File stdout_ = std.stdio.stdout,

@@ -29038,7 +29038,7 @@ assert(tz.dstName == "PDT");
         enforce(file.exists, new DateTimeException(format("File %s does not exist.", file)));
         enforce(file.isFile, new DateTimeException(format("%s is not a file.", file)));
 
-        auto tzFile = File(file);
+        auto tzFile = openFile(file);
         immutable gmtZone = file.canFind("GMT");
 
         try
@@ -29128,7 +29128,8 @@ assert(tz.dstName == "PDT");
             foreach(ref inUTC; transitionInUTC)
                 inUTC = readVal!bool(tzFile);
 
-            _enforceValidTZFile(!tzFile.eof());
+            // no need for this, each read will error if it's at eof.
+            //_enforceValidTZFile(!tzFile.eof());
 
             //If version 2, the information is duplicated in 64-bit.
             if(tzFileVersion == '2')
@@ -29223,7 +29224,7 @@ assert(tz.dstName == "PDT");
             auto posixEnvStr = tzFile.readln().strip();
 
             _enforceValidTZFile(tzFile.readln().strip().empty());
-            _enforceValidTZFile(tzFile.eof());
+            //_enforceValidTZFile(tzFile.eof());
 
 
             auto transitionTypes = new TransitionType*[](tempTTInfos.length);
@@ -29531,13 +29532,12 @@ private:
     /+
         Reads an int from a TZ file.
       +/
-    static T readVal(T)(ref File tzFile)
+    static T readVal(T)(BufferedInput tzFile)
         if(is(T == int))
     {
         T[1] buff;
 
-        _enforceValidTZFile(!tzFile.eof());
-        tzFile.rawRead(buff);
+        _enforceValidTZFile(tzFile.read(cast(ubyte[])buff[]) == buff.sizeof);
 
         return cast(int)ntohl(buff[0]);
     }
@@ -29546,13 +29546,12 @@ private:
     /+
         Reads a long from a TZ file.
       +/
-    static T readVal(T)(ref File tzFile)
+    static T readVal(T)(BufferedInput tzFile)
         if(is(T == long))
     {
         T[1] buff;
 
-        _enforceValidTZFile(!tzFile.eof());
-        tzFile.rawRead(buff);
+        _enforceValidTZFile(tzFile.read(cast(ubyte[])buff[]) == buff.sizeof);
 
         return cast(long)ntoh64(buff[0]);
     }
@@ -29560,13 +29559,13 @@ private:
     /+
         Reads an array of values from a TZ file.
       +/
-    static T readVal(T)(ref File tzFile, size_t length)
+    static T readVal(T)(BufferedInput tzFile, size_t length)
         if(isArray!T)
     {
         auto buff = new T(length);
+        ubyte[] bufr = cast(ubyte[])buff;
 
-        _enforceValidTZFile(!tzFile.eof());
-        tzFile.rawRead(buff);
+        _enforceValidTZFile(tzFile.read(bufr[]) == bufr.length);
 
         return buff;
     }
@@ -29575,7 +29574,7 @@ private:
     /+
         Reads a $(D TempTTInfo) from a TZ file.
       +/
-    static T readVal(T)(ref File tzFile)
+    static T readVal(T)(BufferedInput tzFile)
         if(is(T == TempTTInfo))
     {
         return TempTTInfo(readVal!int(tzFile),
@@ -29587,7 +29586,7 @@ private:
     /+
         Reads a value from a TZ file.
       +/
-    static T readVal(T)(ref File tzFile)
+    static T readVal(T)(BufferedInput tzFile)
         if(!is(T == int) &&
            !is(T == long) &&
            !is(T == char[]) &&
@@ -29595,8 +29594,7 @@ private:
     {
         T[1] buff;
 
-        _enforceValidTZFile(!tzFile.eof());
-        tzFile.rawRead(buff);
+        _enforceValidTZFile(tzFile.read(cast(ubyte[])buff[]) == buff.sizeof);
 
         return buff[0];
     }
