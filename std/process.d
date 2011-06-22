@@ -327,7 +327,6 @@ public:
         stdin, stdout, stdout);
     ---
 */
-alias DStream File;
 
 Pid spawnProcess(string command,
     File stdin_ = std.stdio.stdin,
@@ -401,11 +400,11 @@ version(Posix) private Pid spawnProcessImpl
     }
 
     // Get the file descriptors of the streams.
-    auto stdinFD  = core.stdc.stdio.fileno(stdin_.getFP());
+    auto stdinFD  = stdin_.handle;
     errnoEnforce(stdinFD != -1, "Invalid stdin stream");
-    auto stdoutFD = core.stdc.stdio.fileno(stdout_.getFP());
+    auto stdoutFD = stdout_.handle;
     errnoEnforce(stdoutFD != -1, "Invalid stdout stream");
-    auto stderrFD = core.stdc.stdio.fileno(stderr_.getFP());
+    auto stderrFD = stderr_.handle;
     errnoEnforce(stderrFD != -1, "Invalid stderr stream");
 
 
@@ -741,12 +740,8 @@ public:
         // but the File.wrapFile() function disables automatic closing of
         // the file.  Perhaps there should be a protected version of
         // wrapFile() that fills this purpose?
-        p._read.p = new File.Impl(
-            errnoEnforce(fdopen(fds[0], "r"), "Cannot open read end of pipe"),
-            1, null);
-        p._write.p = new File.Impl(
-            errnoEnforce(fdopen(fds[1], "w"), "Cannot open write end of pipe"),
-            1, null);
+        p._read = new File(fds[0]);
+        p._write = new File(fds[1]);
 
         return p;
     }
@@ -1046,7 +1041,7 @@ ProcessResult execute(string command)
         Redirect.stdout | Redirect.stderrToStdout);
 
     Appender!(ubyte[]) a;
-    foreach (ubyte[] chunk; p.stdout.byChunk(4096))  a.put(chunk);
+    foreach (chunk; ByChunk(p.stdout, 4096))  a.put(chunk);
 
     typeof(return) r;
     r.output = cast(string) a.data;
@@ -1063,7 +1058,7 @@ ProcessResult execute(string name, string[] args...)
         Redirect.stdout | Redirect.stderrToStdout);
 
     Appender!(ubyte[]) a;
-    foreach (ubyte[] chunk; p.stdout.byChunk(4096))  a.put(chunk);
+    foreach (chunk; ByChunk(p.stdout, 4096))  a.put(chunk);
 
     typeof(return) r;
     r.output = cast(string) a.data;

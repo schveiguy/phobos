@@ -27,6 +27,7 @@ module std.date;
 
 import std.conv, std.datebase, std.dateparse, std.exception, std.stdio;
 import std.c.stdlib;
+import core.stdc.stdio;
 
 pragma(msg, "std.date and std.dateparse have been scheduled for deprecation. "
             "Please use std.datetime instead.");

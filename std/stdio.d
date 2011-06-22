@@ -13,19 +13,145 @@ Authors:   $(WEB digitalmars.com, Walter Bright),
            Steven Schveighoffer
  */
 module std.stdio;
-import std.string;
 import std.format;
+import std.string;
+import core.memory, core.stdc.errno, core.stdc.stddef, core.stdc.stdlib,
+    core.stdc.string;
 
-version(Posix)
+version (DigitalMars) version (Windows)
 {
-    import core.stdc.stdlib;
-    import core.sys.posix.unistd;
-    import core.sys.posix.fcntl;
-    extern(C) ssize_t getdelim (char**, size_t*, int, FILE*);
+    // Specific to the way Digital Mars C does stdio
+    version = DIGITAL_MARS_STDIO;
+    import std.c.stdio : __fhnd_info, FHND_WCHAR, FHND_TEXT;
 }
 
-public import core.stdc.stdio;
-import core.stdc.string;
+version (Posix)
+{
+    import core.sys.posix.stdio;
+    import core.sys.posix.fcntl;
+    import core.sys.posix.unistd;
+    alias core.sys.posix.stdio.fileno fileno;
+}
+
+version (linux)
+{
+    // Specific to the way Gnu C does stdio
+    version = GCC_IO;
+    extern(C) FILE* fopen64(const char*, const char*);
+}
+
+version (OSX)
+{
+    version = GENERIC_IO;
+    alias core.stdc.stdio.fopen fopen64;
+}
+
+version (FreeBSD)
+{
+    version = GENERIC_IO;
+    alias core.stdc.stdio.fopen fopen64;
+}
+
+version(Windows)
+{
+    alias core.stdc.stdio.fopen fopen64;
+}
+
+version (DIGITAL_MARS_STDIO)
+{
+    extern (C)
+    {
+        /* **
+         * Digital Mars under-the-hood C I/O functions.
+         * Use _iobuf* for the unshared version of FILE*,
+         * usable when the FILE is locked.
+         */
+        int _fputc_nlock(int, _iobuf*);
+        int _fputwc_nlock(int, _iobuf*);
+        int _fgetc_nlock(_iobuf*);
+        int _fgetwc_nlock(_iobuf*);
+        int __fp_lock(FILE*);
+        void __fp_unlock(FILE*);
+
+        int setmode(int, int);
+    }
+    alias _fputc_nlock FPUTC;
+    alias _fputwc_nlock FPUTWC;
+    alias _fgetc_nlock FGETC;
+    alias _fgetwc_nlock FGETWC;
+
+    alias __fp_lock FLOCK;
+    alias __fp_unlock FUNLOCK;
+
+    alias setmode _setmode;
+    enum _O_BINARY = 0x8000;
+    int _fileno(FILE* f) { return f._file; }
+    alias _fileno fileno;
+}
+else version (GCC_IO)
+{
+    /* **
+     * Gnu under-the-hood C I/O functions; see
+     * http://gnu.org/software/libc/manual/html_node/I_002fO-on-Streams.html
+     */
+    extern (C)
+    {
+        int fputc_unlocked(int, _iobuf*);
+        int fputwc_unlocked(wchar_t, _iobuf*);
+        int fgetc_unlocked(_iobuf*);
+        int fgetwc_unlocked(_iobuf*);
+        void flockfile(FILE*);
+        void funlockfile(FILE*);
+        ssize_t getline(char**, size_t*, FILE*);
+        ssize_t getdelim (char**, size_t*, int, FILE*);
+
+        private size_t fwrite_unlocked(const(void)* ptr,
+                size_t size, size_t n, _iobuf *stream);
+    }
+
+    version (linux)
+    {
+        // declare fopen64 if not already
+        static if (!is(typeof(fopen64)))
+            extern (C) FILE* fopen64(in char*, in char*);
+    }
+
+    alias fputc_unlocked FPUTC;
+    alias fputwc_unlocked FPUTWC;
+    alias fgetc_unlocked FGETC;
+    alias fgetwc_unlocked FGETWC;
+
+    alias flockfile FLOCK;
+    alias funlockfile FUNLOCK;
+}
+else version (GENERIC_IO)
+{
+    extern (C)
+    {
+        void flockfile(FILE*);
+        void funlockfile(FILE*);
+    }
+
+    int fputc_unlocked(int c, _iobuf* fp) { return fputc(c, cast(shared) fp); }
+    int fputwc_unlocked(wchar_t c, _iobuf* fp)
+    {
+        return fputwc(c, cast(shared) fp);
+    }
+    int fgetc_unlocked(_iobuf* fp) { return fgetc(cast(shared) fp); }
+    int fgetwc_unlocked(_iobuf* fp) { return fgetwc(cast(shared) fp); }
+
+    alias fputc_unlocked FPUTC;
+    alias fputwc_unlocked FPUTWC;
+    alias fgetc_unlocked FGETC;
+    alias fgetwc_unlocked FGETWC;
+
+    alias flockfile FLOCK;
+    alias funlockfile FUNLOCK;
+}
+else
+{
+    static assert(0, "unsupported C I/O system");
+}
 
 /**
  * Seek anchor.  Used when telling a seek function which anchor to seek from
@@ -210,7 +336,7 @@ interface BufferedOutput : Seek
     void close();
 }
 
-class DStream : InputStream, OutputStream
+class File : InputStream, OutputStream
 {
     // the file descriptor
     // NOTE: we do not close this on destruction because this low level class
@@ -232,7 +358,7 @@ class DStream : InputStream, OutputStream
      * Open a file as a dstream.  the specification for mode is identical
      * to the linux man page for fopen
      */
-    static DStream open(const char[] name, const char[] mode = "rb")
+    static File open(const char[] name, const char[] mode = "rb")
     {
         if(!mode.length)
             throw new Exception("error in mode specification");
@@ -278,7 +404,7 @@ class DStream : InputStream, OutputStream
             throw new Exception("Error opening file, check errno");
 
         // wrap the file in a D stream
-        auto result = new DStream(fd);
+        auto result = new File(fd);
 
         // perform a seek if necessary
         if(m == 'a')
@@ -451,7 +577,7 @@ class DBufferedInput : BufferedInput
             auto end = data.ptr + data.length;
             for(;ptr < end; ++ptr)
             {
-                if(*ptr == delim)
+                if(*ptr == lineterm)
                     break;
             }
             return ptr - data.ptr + 1;
@@ -688,6 +814,14 @@ class DBufferedInput : BufferedInput
     {
         // no specialized code needed.
     }
+
+    @property ByChunk byChunk(size_t chunkSize = 0)
+    {
+        if(chunkSize == 0)
+            // default to a reasonable chunk size
+            chunkSize = buffer.length / 4;
+        return ByChunk(this, chunkSize);
+    }
 }
 
 class DBufferedOutput : BufferedOutput
@@ -758,7 +892,7 @@ class DBufferedOutput : BufferedOutput
             {
                 // need to flush some data
                 auto endpos = _startofwrite + fcheck;
-                ensureWrite(buffer[0..endpos]);
+                ensureWrite(buffer[0..endpos], endpos);
 
                 // now, we need to move the data to the front of the buffer
                 // this is the only place we have to do this.
@@ -965,6 +1099,58 @@ class DBufferedOutput : BufferedOutput
     }
 }
 
+struct ByChunk
+{
+    private DBufferedInput _input;
+    private size_t _size;
+    private const(ubyte)[] _curchunk;
+
+    this(InputStream input, size_t size)
+    {
+        this(new DBufferedInput(input), size);
+    }
+
+    this(DBufferedInput dbi, size_t size)
+    in
+    {
+        assert(size, "size cannot be greater than zero");
+    }
+    body
+    {
+        this._input = dbi;
+        this._size = size;
+        popFront();
+    }
+
+    void popFront()
+    {
+        _curchunk = _input.readUntil(&stopCondition);
+    }
+
+    @property const(ubyte)[] front()
+    {
+        return _curchunk;
+    }
+
+    @property bool empty() const
+    {
+        return _curchunk.length == 0;
+    }
+
+    private size_t stopCondition(const(ubyte)[] data, size_t start)
+    {
+        return data.length >= _size ? _size : ~0;
+    }
+
+    /**
+     * Close the input stream forcibly
+     */
+    void close()
+    {
+        _input.close();
+    }
+}
+
 class CStream : BufferedInput, BufferedOutput
 {
     private
@@ -1046,7 +1232,7 @@ class CStream : BufferedInput, BufferedOutput
 
     const(ubyte)[] readln(ubyte lineterm = '\n')
     {
-        auto result = .getdelim(&_buf, &_bufsize, delim, source);
+        auto result = .getdelim(&_buf, &_bufsize, lineterm, source);
         if(result < 0)
             // Throw instead?
             return null;
@@ -1119,7 +1305,7 @@ struct FOutput
     // independent of the data being sent to it.
     private ubyte _charwidth;
 
-    this(BufferedOutput output, size_t charwidth)
+    this(BufferedOutput output, ubyte charwidth)
     in
     {
         assert(charwidth == 1 || charwidth == 2 || charwidth == 4);
@@ -1328,7 +1514,26 @@ struct FOutput
 auto openFile(string mode = "r")(string fname)
 {
     static if(mode == "r")
-        return new DBufferedInput(DStream.open(fname, mode));
+        return new DBufferedInput(File.open(fname, mode));
     else
         static assert(0, "mode not supported for openFile: " ~ mode);
+}
+
+__gshared {
+
+    File stdin;
+    File stdout;
+    File stderr;
+}
+
+shared static this()
+{
+    version(linux)
+    {
+        stdin = new File(0);
+        stdout = new File(1);
+        stderr = new File(2);
+    }
+    else
+        static assert(0, "Unsupported OS");
 }

@@ -18,7 +18,7 @@ module std.conv;
 
 import core.stdc.math : ldexpl;
 import core.memory, core.stdc.errno, core.stdc.string,
-    core.stdc.stdlib;
+    core.stdc.stdlib, core.stdc.stdio;
 import std.algorithm, std.array, std.ctype, std.exception, std.math, std.range,
     std.stdio, std.string, std.traits, std.typecons, std.typetuple, std.utf;
 import std.metastrings;
