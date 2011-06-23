@@ -17,6 +17,10 @@ import std.format;
 import std.string;
 import core.memory, core.stdc.errno, core.stdc.stddef, core.stdc.stdlib,
     core.stdc.string;
+import std.traits;
+import std.range;
+import std.utf;
+import std.conv;
 
 version (DigitalMars) version (Windows)
 {
@@ -1289,10 +1293,21 @@ struct FInput
 {
     private BufferedInput input;
 
+    this(InputStream ins)
+    {
+        this(new DBufferedInput(ins));
+    }
+
+    this(FILE *fp)
+    {
+        this(new CStream(fp));
+    }
+
     this(BufferedInput input)
     {
         this.input = input;
     }
+
 }
 
 // formatted output stream
@@ -1302,10 +1317,22 @@ struct FOutput
     public BufferedOutput output;
 
     // this is settable at runtime because the interface to a text stream is
-    // independent of the data being sent to it.
+    // independent of the character width being sent to it.  Otherwise, it
+    // would not be possible to say, for example, change the output width to
+    // wchar for stdou.
     private ubyte _charwidth;
 
-    this(BufferedOutput output, ubyte charwidth)
+    this(OutputStream outs, ubyte charwidth = char.sizeof)
+    {
+        this(new DBufferedOutput(outs), charwidth);
+    }
+
+    this(FILE *outs, ubyte charwidth = char.sizeof)
+    {
+        this(new CStream(outs), charwidth);
+    }
+
+    this(BufferedOutput output, ubyte charwidth = char.sizeof)
     in
     {
         assert(charwidth == 1 || charwidth == 2 || charwidth == 4);
@@ -1337,7 +1364,7 @@ struct FOutput
     private void priv_write(C, bool doFlush, S...)(S args)
     {
         output.begin();
-        w = OutputRange!C(output);
+        auto w = OutputRange!C(output);
 
         foreach(arg; args)
         {
@@ -1413,7 +1440,7 @@ struct FOutput
         static assert(S.length > 0, errorMessage);
         static assert(isSomeString!(S[0]), errorMessage);
         output.begin();
-        OutputRange!C w;
+        auto w = OutputRange!C(output);
         std.format.formattedWrite(w, args);
         static if(doNewline)
         {
@@ -1444,11 +1471,11 @@ struct FOutput
     }
 
 
-    private struct _outputrange(CT)
+    private struct OutputRange(CT)
     {
-        OutputStream output;
+        BufferedOutput output;
 
-        this(OutputStream output)
+        this(BufferedOutput output)
         {
             this.output = output;
         }
@@ -1478,7 +1505,7 @@ struct FOutput
 
         void put(A)(A c) if(is(A : const(dchar)))
         {
-            static if(C.sizeof == CT.sizeof)
+            static if(A.sizeof == CT.sizeof)
             {
                 // output the data directly to the output stream
                 output.put(cast(ubyte[])((&c)[0..1]));
@@ -1500,7 +1527,7 @@ struct FOutput
                 else static if(CT.sizeof == 4)
                 {
                     // converting to utf32, just write directly
-                    auto dchar dc = c;
+                    dchar dc = c;
                     assert(isValidDchar(dc));
                     output.put(cast(ubyte[])(&dc)[0..1]);
                 }
@@ -1524,6 +1551,10 @@ __gshared {
     File stdin;
     File stdout;
     File stderr;
+
+    FInput din;
+    FOutput dout;
+    FOutput derr;
 }
 
 shared static this()
@@ -1536,4 +1567,202 @@ shared static this()
     }
     else
         static assert(0, "Unsupported OS");
+
+    // set up the shared buffered streams
+    din = FInput(stdin);
+    dout = FOutput(stdout);
+    derr = FOutput(stderr);
 }
+
+void useCStdio()
+{
+    din = FInput(core.stdc.stdio.stdin);
+    dout = FOutput(core.stdc.stdio.stdout);
+    derr = FOutput(core.stdc.stdio.stderr);
+}
+
+/***********************************
+For each argument $(D arg) in $(D args), format the argument (as per
+$(LINK2 std_conv.html, to!(string)(arg))) and write the resulting
+string to $(D args[0]). A call without any arguments will fail to
+compile.
+
+Throws: In case of an I/O error, throws an $(D StdioException).
+ */
+void write(T...)(T args) if (!is(T[0] : File))
+{
+    dout.write(args);
+}
+
+unittest
+{
+    //printf("Entering test at line %d\n", __LINE__);
+    scope(failure) printf("Failed test at line %d\n", __LINE__);
+    void[] buf;
+    write(buf);
+    // test write
+    string file = "dmd-build-test.deleteme.txt";
+    auto f = File(file, "w");
+//    scope(exit) { std.file.remove(file); }
+     f.write("Hello, ",  "world number ", 42, "!");
+     f.close;
+     assert(cast(char[]) std.file.read(file) == "Hello, world number 42!");
+    // // test write on stdout
+    //auto saveStdout = stdout;
+    //scope(exit) stdout = saveStdout;
+    //stdout.open(file, "w");
+    Object obj;
+    //write("Hello, ",  "world number ", 42, "! ", obj);
+    //stdout.close;
+    // auto result = cast(char[]) std.file.read(file);
+    // assert(result == "Hello, world number 42! null", result);
+}
+
+// Most general instance
+void writeln(T...)(T args)
+{
+    dout.writeln(args);
+}
+
+unittest
+{
+        //printf("Entering test at line %d\n", __LINE__);
+    scope(failure) printf("Failed test at line %d\n", __LINE__);
+    // test writeln
+    string file = "dmd-build-test.deleteme.txt";
+    auto f = File(file, "w");
+    scope(exit) { std.file.remove(file); }
+    f.writeln("Hello, ",  "world number ", 42, "!");
+    f.close;
+    version (Windows)
+        assert(cast(char[]) std.file.read(file) ==
+                "Hello, world number 42!\r\n");
+    else
+        assert(cast(char[]) std.file.read(file) ==
+                "Hello, world number 42!\n");
+    // test writeln on stdout
+    auto saveStdout = stdout;
+    scope(exit) stdout = saveStdout;
+    stdout.open(file, "w");
+    writeln("Hello, ",  "world number ", 42, "!");
+    stdout.close;
+    version (Windows)
+        assert(cast(char[]) std.file.read(file) ==
+                "Hello, world number 42!\r\n");
+    else
+        assert(cast(char[]) std.file.read(file) ==
+                "Hello, world number 42!\n");
+}
+
+/***********************************
+ * If the first argument $(D args[0]) is a $(D FILE*), use
+ * $(LINK2 std_format.html#format-string, the format specifier) in
+ * $(D args[1]) to control the formatting of $(D
+ * args[2..$]), and write the resulting string to $(D args[0]).
+ * If $(D arg[0]) is not a $(D FILE*), the call is
+ * equivalent to $(D writef(stdout, args)).
+ *
+
+IMPORTANT:
+
+New behavior starting with D 2.006: unlike previous versions,
+$(D writef) (and also $(D writefln)) only scans its first
+string argument for format specifiers, but not subsequent string
+arguments. This decision was made because the old behavior made it
+unduly hard to simply print string variables that occasionally
+embedded percent signs.
+
+Also new starting with 2.006 is support for positional
+parameters with
+$(LINK2 http://opengroup.org/onlinepubs/009695399/functions/printf.html,
+POSIX) syntax.
+
+Example:
+
+-------------------------
+writef("Date: %2$s %1$s", "October", 5); // "Date: 5 October"
+------------------------
+
+The positional and non-positional styles can be mixed in the same
+format string. (POSIX leaves this behavior undefined.) The internal
+counter for non-positional parameters tracks the popFront parameter after
+the largest positional parameter already used.
+
+New starting with 2.008: raw format specifiers. Using the "%r"
+specifier makes $(D writef) simply write the binary
+representation of the argument. Use "%-r" to write numbers in little
+endian format, "%+r" to write numbers in big endian format, and "%r"
+to write numbers in platform-native format.
+
+*/
+
+void writef(T...)(T args)
+{
+    dout.writef(args);
+}
+
+unittest
+{
+    //printf("Entering test at line %d\n", __LINE__);
+    scope(failure) printf("Failed test at line %d\n", __LINE__);
+    // test writef
+    string file = "dmd-build-test.deleteme.txt";
+    auto f = File(file, "w");
+    scope(exit) { std.file.remove(file); }
+    f.writef("Hello, %s world number %s!", "nice", 42);
+    f.close;
+    assert(cast(char[]) std.file.read(file) ==  "Hello, nice world number 42!");
+    // test write on stdout
+    auto saveStdout = stdout;
+    scope(exit) stdout = saveStdout;
+    stdout.open(file, "w");
+    writef("Hello, %s world number %s!", "nice", 42);
+    stdout.close;
+    assert(cast(char[]) std.file.read(file) == "Hello, nice world number 42!");
+}
+
+/***********************************
+ * Equivalent to $(D writef(args, '\n')).
+ */
+void writefln(T...)(T args)
+{
+    dout.writefln(args);
+}
+
+unittest
+{
+        //printf("Entering test at line %d\n", __LINE__);
+    scope(failure) printf("Failed test at line %d\n", __LINE__);
+    // test writefln
+    string file = "dmd-build-test.deleteme.txt";
+    auto f = File(file, "w");
+    scope(exit) { std.file.remove(file); }
+    f.writefln("Hello, %s world number %s!", "nice", 42);
+    f.close;
+    version (Windows)
+        assert(cast(char[]) std.file.read(file) ==
+                "Hello, nice world number 42!\r\n");
+    else
+        assert(cast(char[]) std.file.read(file) ==
+                "Hello, nice world number 42!\n",
+                cast(char[]) std.file.read(file));
+    // test write on stdout
+    // auto saveStdout = stdout;
+    // scope(exit) stdout = saveStdout;
+    // stdout.open(file, "w");
+    // assert(stdout.isOpen);
+    // writefln("Hello, %s world number %s!", "nice", 42);
+    // foreach (F ; TypeTuple!(ifloat, idouble, ireal))
+    // {
+    //     F a = 5i;
+    //     F b = a % 2;
+    //     writeln(b);
+    // }
+    // stdout.close;
+    // auto read = cast(char[]) std.file.read(file);
+    // version (Windows)
+    //     assert(read == "Hello, nice world number 42!\r\n1\r\n1\r\n1\r\n", read);
+    // else
+    //     assert(read == "Hello, nice world number 42!\n1\n1\n1\n", "["~read~"]");
+}
+
