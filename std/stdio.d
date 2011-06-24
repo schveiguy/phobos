@@ -16,7 +16,7 @@ module std.stdio;
 import std.format;
 import std.string;
 import core.memory, core.stdc.errno, core.stdc.stddef, core.stdc.stdlib,
-    core.stdc.string;
+    core.stdc.string, core.stdc.wchar_;
 import std.traits;
 import std.range;
 import std.utf;
@@ -261,15 +261,28 @@ interface BufferedInput : Seek
     /**
      * Read a line from the stream.  Optionally you can give a line terminator
      * other than '\n'
+     *
+     * Note that this does not take into account encoding of the file.  So if
+     * the file is encoded as UTF-16 text, this may not return a valid line.  
+     *
+     * The lineterm argument is treated as a binary encoding of the stream's
+     * data.  Note that some streams -- C streams in particular -- may be
+     * inefficient if you do more than one element in lineterm.
      */
-    const(ubyte)[] readln(ubyte lineterm = '\n');
+    const(ubyte)[] readln(const(ubyte)[] lineterm);
+    /// ditto
+    final const(ubyte)[] readln(ubyte lineterm = '\n')
+    {
+        return readln((&lineterm)[0..1]);
+    }
 
     /**
      * Close the stream.  This releases any resources from the object.
      */
     void close();
 
-    /**
+    /+ Commented out for now, need to investigate how sharing works
+        /**
      * Begin a read
      */
     void begin();
@@ -277,7 +290,7 @@ interface BufferedInput : Seek
     /**
      * End a read
      */
-    void end();
+    void end(); +/
 }
 
 /**
@@ -293,6 +306,8 @@ interface OutputStream : Seek
      * If 0 is returned, then the stream cannot be written to.
      */
     size_t put(const(ubyte)[] data);
+    /// ditto
+    alias put write;
 
     /**
      * Close the stream.  This releases any resources from the object.
@@ -311,6 +326,7 @@ interface BufferedOutput : Seek
     /// ditto
     alias put write;
 
+    /+ commented out for now, need to investigate shared more
     /**
      * Begin a write.  This can be used to optimize writes to the stream, such
      * as avoiding flushing until an entire write is done, or to take a lock on
@@ -318,7 +334,7 @@ interface BufferedOutput : Seek
      *
      * The implementation may do nothing for this function.
      */
-    void begin();
+    void begin() shared;
 
     /**
      * End a write.  This can be used to optimize writes to the stream, such
@@ -327,7 +343,7 @@ interface BufferedOutput : Seek
      *
      * The implementation may do nothing for this function.
      */
-    void end();
+    void end() shared; +/
 
     /**
      * Flush the written data in the buffer into the underlying output stream.
@@ -573,21 +589,46 @@ class DBufferedInput : BufferedInput
         return result;
     }
     
-    final const(ubyte)[] readln(ubyte lineterm = '\n')
+    alias BufferedInput.readln readln;
+    final const(ubyte)[] readln(const(ubyte)[] lineterm)
     {
-        size_t _checkDelim(const(ubyte)[] data, size_t start)
+        immutable lastbyte = lineterm[$-1];
+        size_t _checkDelim1(const(ubyte)[] data, size_t start)
         {
             auto ptr = data.ptr + start;
             auto end = data.ptr + data.length;
             for(;ptr < end; ++ptr)
             {
-                if(*ptr == lineterm)
+                if(*ptr == lastbyte)
                     break;
             }
-            return ptr - data.ptr + 1;
+            return ptr == end ? ~0 : ptr - data.ptr + 1;
         }
 
-        return readUntil(&_checkDelim);
+        size_t _checkDelimN(const(ubyte)[] data, size_t start)
+        {
+            // TODO; can try optimizing this
+            auto ptr = data.ptr + start + lineterm.length - 1;
+            auto end = data.ptr + data.length;
+            auto ltend = lineterm.ptr + lineterm.length - 1;
+            for(;ptr < end; ++ptr)
+            {
+                if(*ptr == lastbyte)
+                {
+                    // triggers a check
+                    auto ptr2 = ptr - lineterm.length + 1;
+                    auto ltptr = lineterm.ptr;
+                    for(; ltptr < ltend; ++ltptr, ++ptr2)
+                        if(*ltptr != *ptr2)
+                            break;
+                    if(ltptr == ltend)
+                        break;
+                }
+            }
+            return ptr >= end ? ~0 : ptr - data.ptr + 1;
+        }
+
+        return lineterm.length == 1 ? readUntil(&_checkDelim1) : readUntil(&_checkDelimN);
     }
 
     /**
@@ -809,15 +850,15 @@ class DBufferedInput : BufferedInput
         readpos = valid = 0;
     }
 
-    override void begin()
+    /*override void begin() shared
     {
         // no specialized code needed.
     }
 
-    override void end()
+    override void end() shared
     {
         // no specialized code needed.
-    }
+    }*/
 
     @property ByChunk byChunk(size_t chunkSize = 0)
     {
@@ -845,6 +886,11 @@ class DBufferedOutput : BufferedOutput
         // function to check how much data should be flushed.
         ptrdiff_t delegate(const(ubyte)[] data) _flushCheck;
 
+        // function to encode data for writing.  This is called prior to
+        // writing the data to the underlying stream.  When this is set, extra
+        // copies of the data may be made.
+        void delegate(ubyte[] data) _encode;
+
         // if this is set, _flushCheck should not be called when checking for
         // automatic flushing.
         bool _noflushcheck = false;
@@ -863,6 +909,7 @@ class DBufferedOutput : BufferedOutput
         this.buffer.length = this.buffer.capacity;
     }
 
+    /+ commented out for now, not sure how shared classes are going to work for I/O
     final void begin()
     in
     {
@@ -889,6 +936,8 @@ class DBufferedOutput : BufferedOutput
         _noflushcheck = false;
 
         // OK, so all flush checking was delayed, need to do a flush check.
+        if(writepos < _startofwrite)
+            throw new Exception("here");
         if(_flushCheck && writepos - _startofwrite > 0)
         {
             auto fcheck = _flushCheck(buffer[_startofwrite..writepos]);
@@ -896,6 +945,9 @@ class DBufferedOutput : BufferedOutput
             {
                 // need to flush some data
                 auto endpos = _startofwrite + fcheck;
+                if(_encode)
+                    _encode(buffer[0..endpos]);
+
                 ensureWrite(buffer[0..endpos], endpos);
 
                 // now, we need to move the data to the front of the buffer
@@ -906,7 +958,7 @@ class DBufferedOutput : BufferedOutput
             }
         }
         _startofwrite = 0;
-    }
+    } +/
 
     final void put(const(ubyte)[] data)
     {
@@ -935,8 +987,48 @@ class DBufferedOutput : BufferedOutput
         if(minwrite > 0)
         {
             // need to write some data to the actual stream. But we want to
-            // minimize the calls to output.write.
-            if(writepos && minwrite <= buffer.length)
+            // minimize the calls to output.put.
+            if(_encode)
+            {
+                // simple case, everything must be buffered and encoded before
+                // its written, so just do that in a loop.  This handles all
+                // possible values of minwrite and whether there is data in the
+                // buffer already.
+                if(writepos)
+                {
+                    // already data in the buffer, this is a special case, we
+                    // can optimize the rest in the loop.
+                    auto ntoCopy = minwrite - writepos;
+                    if(ntoCopy + writepos > buffer.length)
+                        ntoCopy = buffer.length - writepos;
+                    auto totalbytes = writepos + ntoCopy;
+                    buffer[writepos..totalbytes] = data[0..ntoCopy];
+                    data = data[ntoCopy..$];
+                    _encode(buffer[0..totalbytes]);
+                    ensureWrite(buffer[0..totalbytes], totalbytes);
+                    writepos = _startofwrite = 0;
+                    minwrite -= totalbytes;
+                }
+                while(minwrite > 0)
+                {
+                    assert(writepos == 0); // sanity check.
+                    auto ntoCopy = minwrite > buffer.length ? buffer.length : minwrite;
+                    auto dest = buffer[0..ntoCopy];
+                    dest[] = data[0..ntoCopy];
+                    data = data[ntoCopy..$];
+                    _encode(dest);
+                    ensureWrite(dest, dest.length);
+                    minwrite -= ntoCopy;
+                }
+
+                // copy whatever is left over.
+                if(data.length)
+                {
+                    buffer[0..data.length] = data[];
+                    writepos = data.length;
+                }
+            }
+            else if(writepos && minwrite <= buffer.length)
             {
                 // valid data in the buffer.  Easiest thing to do is to
                 // write the minimum data to the buffer, ensure it gets
@@ -944,6 +1036,7 @@ class DBufferedOutput : BufferedOutput
                 auto nCopy = minwrite - writepos;
                 buffer[writepos..minwrite] = data[0..nCopy];
                 data = data[nCopy..$];
+
                 ensureWrite(buffer[0..minwrite], minwrite);
                 // copy leftovers to the buffer
                 writepos = data.length;
@@ -1046,6 +1139,8 @@ class DBufferedOutput : BufferedOutput
     {
         if(writepos)
         {
+            if(_encode)
+                _encode(buffer[0..writepos]);
             ensureWrite(buffer[0..writepos], writepos);
             writepos = 0;
         }
@@ -1078,6 +1173,28 @@ class DBufferedOutput : BufferedOutput
     ptrdiff_t delegate(const(ubyte)[] newData) flushCheck() @property
     {
         return _flushCheck;
+    }
+
+    /**
+     * The encoder is responsible for transforming data into the correct
+     * encoding when writing to a stream.  For instance, a UTF-16 file with
+     * byte order different than the native machine will likely need to be
+     * byte-swapped before being written.
+     *
+     * If this is set to non-null, extra copying may occur as a writable buffer
+     * is needed to encode the stream.
+     */ 
+    @property void encoder(void delegate(ubyte[] data) dg)
+    {
+        _encode = dg;
+    }
+
+    /**
+     * Get the encoder function.
+     */
+    void delegate(ubyte[] data) encoder() @property
+    {
+        return _encode;
     }
 
     private size_t ensureWrite(const(ubyte)[] data, ptrdiff_t minsize)
@@ -1162,6 +1279,8 @@ class CStream : BufferedInput, BufferedOutput
         FILE *source;
         char *_buf; // C malloc'd buffer used to support getDelim
         size_t _bufsize; // size of buffer
+        ubyte _charwidth; // width of the stream (orientation)
+        bool _locked; // whether the stream is locked or not.
     }
 
     enum GROW_SIZE = 1024; // optimized for FILE buffer sizes
@@ -1174,9 +1293,11 @@ class CStream : BufferedInput, BufferedOutput
     this(FILE *source)
     {
         this.source = source;
+        this._charwidth = .fwide(source, 0) < 0 ? 1 : 2;
     }
 
-    void begin()
+    // comment out for now, not sure how this will work.
+    /+void begin()
     {
         FLOCK(source);
     }
@@ -1184,7 +1305,7 @@ class CStream : BufferedInput, BufferedOutput
     void end()
     {
         FUNLOCK(source);
-    }
+    }+/
 
     override ulong seek(long delta, Anchor whence=Anchor.Begin)
     {
@@ -1224,19 +1345,32 @@ class CStream : BufferedInput, BufferedOutput
 
     override size_t read(ubyte[] data)
     {
-        size_t result = fread(data.ptr, ubyte.sizeof, data.length, source);
-        if(result < data.length)
+        if(_charwidth == 1)
         {
-            // could be error or eof, check error
-            if(ferror(source))
-                throw new Exception("Error reading");
+            size_t result = .fread(data.ptr, ubyte.sizeof, data.length, source);
+            if(result < data.length)
+            {
+                // could be error or eof, check error
+                if(ferror(source))
+                    throw new Exception("Error reading");
+            }
+            return result;
         }
-        return result;
+        else
+        {
+            // wide character mode, need to use fgetwc
+        }
     }
 
-    const(ubyte)[] readln(ubyte lineterm = '\n')
+    const(ubyte)[] readln(const(ubyte)[] lineterm)
     {
-        auto result = .getdelim(&_buf, &_bufsize, lineterm, source);
+        // TODO: make sure this is correct for line termination...
+        assert(lineterm.length <= 4);
+        int ltarg = 0;
+        foreach(ub; lineterm)
+            ltarg = (ltarg << 8) | cast(uint)ub;
+            
+        auto result = .getdelim(&_buf, &_bufsize, ltarg, source);
         if(result < 0)
             // Throw instead?
             return null;
@@ -1266,9 +1400,20 @@ class CStream : BufferedInput, BufferedOutput
     // BufferedOutput interface
     void put(const(ubyte)[] data)
     {
-        auto result = fwrite(data.ptr, ubyte.sizeof, data.length, source);
-        if(result < data.length)
-            throw new Exception("Error writing data");
+        if(_charwidth == 1)
+        {
+            // optimized, just write using fwrite.
+            auto result = fwrite(data.ptr, ubyte.sizeof, data.length, source);
+            if(result < data.length)
+            {
+                derr.writeln("Error writing data: ", result, " ", data.length);
+                throw new Exception("Error writing data");
+            }
+        }
+        else
+        {
+            // in wide mode, we must use FPUTWC
+        }
     }
 
     void flush()
@@ -1289,32 +1434,115 @@ class CStream : BufferedInput, BufferedOutput
 }
 
 // formatted input stream
-struct FInput
+struct TextInput
 {
     private BufferedInput input;
 
-    this(InputStream ins)
+    void construct(InputStream ins)
     {
-        this(new DBufferedInput(ins));
+        construct(new DBufferedInput(ins));
     }
 
-    this(FILE *fp)
+    void construct(FILE *fp)
     {
-        this(new CStream(fp));
+        construct(new CStream(fp));
     }
 
-    this(BufferedInput input)
+    void construct(BufferedInput input)
     {
         this.input = input;
     }
+}
 
+/*struct ByLine(Char, Terminator)
+{
+    BufferedInput input;
+    Char[] line;
+    Terminator terminator;
+    KeepTerminator keepTerminator;
+}*/
+
+/**
+ * The width of the text stream
+ */
+enum StreamWidth : ubyte
+{
+    /// Determine width on first access (valid only for CStream streams)
+    AUTO = 0,
+
+    /// 8 bit width
+    UTF8 = 1,
+
+    /// 16 bit width
+    UTF16 = 2,
+
+    /// 32 bit width
+    UTF32 = 4
+}
+
+/**
+ * The byte order of a text stream
+ */
+enum ByteOrder
+{
+    /// Use native byte order (no encoding necessary).  This is the only
+    /// possibility for CStream streams.
+    Native,
+
+    /// Use Little Endian byte order.  Has no effect on 8-bit streams.
+    Little,
+
+    /// Use Big Endian byte order.  Has no effect on 8-bit streams.
+    Big
+}
+
+private void __swapBytes(ubyte[] data, ubyte charwidth)
+{
+    // depending on the char width, do byte swapping on the data stream.
+    assert(data.length % charwidth == 0);
+    switch(charwidth)
+    {
+    case wchar.sizeof:
+        // swap every 2 bytes
+        // TODO: optimize this
+        foreach(ref t; cast(ushort[])data)
+        {
+            t = ((t << 8) & 0xff00) |
+                ((t >> 8) & 0x00ff);
+        }
+        break;
+    case dchar.sizeof:
+        // swap every 4 bytes
+        // TODO: optimize this
+        foreach(ref t; cast(uint[])data)
+        {
+            t = ((t << 24) & 0xff000000) |
+                ((t << 8)  & 0x00ff0000) |
+                ((t >> 8)  & 0x0000ff00) |
+                ((t >> 24) & 0x000000ff);
+        }
+        break;
+    default:
+        assert(0, "invalid charwidth");
+    }
 }
 
 // formatted output stream
-struct FOutput
+//
+// Note, this should never be on the stack, it should only ever be allocated on
+// the heap or in the global segment.
+struct TextOutput
 {
-    // public so it can be reassigned.
-    public BufferedOutput output;
+    // the actual buffered output stream.
+    private BufferedOutput _output;
+
+    /**
+     * Fetch the buffered output stream that backs this text outputter
+     */
+    @property BufferedOutput output()
+    {
+        return _output;
+    }
 
     // this is settable at runtime because the interface to a text stream is
     // independent of the character width being sent to it.  Otherwise, it
@@ -1322,25 +1550,124 @@ struct FOutput
     // wchar for stdou.
     private ubyte _charwidth;
 
-    this(OutputStream outs, ubyte charwidth = char.sizeof)
+    private void encode(ubyte[] data)
     {
-        this(new DBufferedOutput(outs), charwidth);
+        __swapBytes(data, _charwidth);
     }
 
-    this(FILE *outs, ubyte charwidth = char.sizeof)
+    private ptrdiff_t flushLineCheckT(T)(const(T)[] data)
     {
-        this(new CStream(outs), charwidth);
+        for(const(T)* i = data.ptr + data.length - 1; i >= data.ptr; --i)
+        {
+            if(*i == cast(T)'\n')
+                return (i - data.ptr + 1) * T.sizeof;
+        }
+        return -1;
     }
 
-    this(BufferedOutput output, ubyte charwidth = char.sizeof)
+    private ptrdiff_t flushLineCheck(const(ubyte)[] data)
+    {
+        switch(_charwidth)
+        {
+        case 1:
+            return flushLineCheckT(cast(const(char)[])data);
+        case 2:
+            return flushLineCheckT(cast(const(wchar)[])data);
+        case 4:
+            return flushLineCheckT(cast(const(dchar)[])data);
+        default:
+            assert(0, "invalid width");
+        }
+    }
+
+    void construct(OutputStream outs, StreamWidth width = StreamWidth.UTF8, ByteOrder bo = ByteOrder.Native)
     in
     {
-        assert(charwidth == 1 || charwidth == 2 || charwidth == 4);
+        // don't support auto width.
+        assert(width == StreamWidth.UTF8 || width == StreamWidth.UTF16 ||
+               width == StreamWidth.UTF32);
+        assert(bo == ByteOrder.Native || bo == ByteOrder.Little ||
+               bo == ByteOrder.Big);
     }
     body
     {
-        this.output = output;
-        this._charwidth = charwidth;
+        auto dbo = new DBufferedOutput(outs);
+        if(width != StreamWidth.UTF8)
+        {
+            version(LittleEndian)
+            {
+                if(bo == ByteOrder.Big)
+                    dbo.encoder = &encode;
+            }
+            else
+            {
+                if(bo == ByteOrder.Little)
+                    dbo.encoder = &encode;
+            }
+        }
+
+        if(auto f = cast(File)outs)
+        {
+            // this is a device stream, check to see if it's a terminal
+            version(Posix)
+            {
+                if(isatty(f.handle))
+                {
+                    // by default, do a flush check based on a newline
+                    dbo.flushCheck = &flushLineCheck;
+                }
+            }
+            else
+                static assert(0, "Unsupported OS");
+        }
+        construct(dbo, width);
+    }
+
+    void construct(FILE *outs, StreamWidth width = StreamWidth.AUTO)
+    in
+    {
+        // don't support 32-bit width for C streams
+        assert(width == StreamWidth.UTF8 || width == StreamWidth.UTF16 ||
+               width == StreamWidth.AUTO);
+    }
+    body
+    {
+        int mode = void;
+        switch(width)
+        {
+        case StreamWidth.AUTO:
+            mode = 0;
+            break;
+
+        case StreamWidth.UTF8:
+            mode = -1;
+            break;
+
+        case StreamWidth.UTF16:
+            mode = 1;
+            break;
+
+        default:
+            assert(0, "Invalid width");
+        }
+
+        if(.fwide(outs, mode) < 0)
+            width = StreamWidth.UTF8;
+        else
+            width = StreamWidth.UTF16;
+        construct(new CStream(outs), width);
+    }
+
+    void construct(BufferedOutput outs, StreamWidth width = StreamWidth.UTF8)
+    in
+    {
+        assert(width == StreamWidth.UTF8 || width == StreamWidth.UTF16 ||
+               width == StreamWidth.UTF32 || width == StreamWidth.AUTO);
+    }
+    body
+    {
+        this._output = outs;
+        this._charwidth = width;
     }
 
     void write(S...)(S args)
@@ -1348,23 +1675,41 @@ struct FOutput
         switch(_charwidth)
         {
         case 1:
-            priv_write!(char, false)(args);
+            priv_write!(char)(args);
             break;
         case 2:
-            priv_write!(wchar, false)(args);
+            priv_write!(wchar)(args);
             break;
         case 4:
-            priv_write!(dchar, false)(args);
+            priv_write!(dchar)(args);
             break;
         default:
             assert(0);
         }
     }
 
-    private void priv_write(C, bool doFlush, S...)(S args)
+    void writeln(S...)(S args)
     {
-        output.begin();
-        auto w = OutputRange!C(output);
+        switch(_charwidth)
+        {
+        case 1:
+            priv_write!(char)(args, '\n');
+            break;
+        case 2:
+            priv_write!(wchar)(args, '\n');
+            break;
+        case 4:
+            priv_write!(dchar)(args, '\n');
+            break;
+        default:
+            assert(0);
+        }
+    }
+
+    private void priv_write(C, S...)(S args)
+    {
+        //_output.begin();
+        auto w = OutputRange!C(_output);
 
         foreach(arg; args)
         {
@@ -1387,27 +1732,7 @@ struct FOutput
                 std.format.formattedWrite(w, "%s", arg);
             }
         }
-        static if(doFlush)
-            output.flush();
-        output.end();
-    }
-
-    void writeln(S...)(S args)
-    {
-        switch(_charwidth)
-        {
-        case 1:
-            priv_write!(char, true)(args, '\n');
-            break;
-        case 2:
-            priv_write!(wchar, true)(args, '\n');
-            break;
-        case 4:
-            priv_write!(dchar, true)(args, '\n');
-            break;
-        default:
-            assert(0);
-        }
+        //_output.end();
     }
 
     private enum errorMessage =
@@ -1435,21 +1760,6 @@ struct FOutput
         }
     }
 
-    private void priv_writef(C, bool doNewline, S...)(S args)
-    {
-        static assert(S.length > 0, errorMessage);
-        static assert(isSomeString!(S[0]), errorMessage);
-        output.begin();
-        auto w = OutputRange!C(output);
-        std.format.formattedWrite(w, args);
-        static if(doNewline)
-        {
-            w.put('\n');
-            output.flush();
-        }
-        output.end();
-    }
-
     void writefln(S...)(S args)
     {
         static assert(S.length > 0, errorMessage);
@@ -1468,6 +1778,20 @@ struct FOutput
         default:
             assert(0);
         }
+    }
+
+    private void priv_writef(C, bool doNewline, S...)(S args)
+    {
+        static assert(S.length > 0, errorMessage);
+        static assert(isSomeString!(S[0]), errorMessage);
+        //_output.begin();
+        auto w = OutputRange!C(_output);
+        std.format.formattedWrite(w, args);
+        static if(doNewline)
+        {
+            w.put('\n');
+        }
+        //_output.end();
     }
 
 
@@ -1536,6 +1860,16 @@ struct FOutput
             }
         }
     }
+
+    void flush()
+    {
+        _output.flush();
+    }
+
+    void close()
+    {
+        _output.close();
+    }
 }
 
 auto openFile(string mode = "r")(string fname)
@@ -1552,9 +1886,9 @@ __gshared {
     File stdout;
     File stderr;
 
-    FInput din;
-    FOutput dout;
-    FOutput derr;
+    TextInput din;
+    TextOutput dout;
+    TextOutput derr;
 }
 
 shared static this()
@@ -1569,16 +1903,24 @@ shared static this()
         static assert(0, "Unsupported OS");
 
     // set up the shared buffered streams
-    din = FInput(stdin);
-    dout = FOutput(stdout);
-    derr = FOutput(stderr);
+    din.construct(stdin);
+    dout.construct(stdout);
+    derr.construct(stderr);
+}
+
+shared static ~this()
+{
+    // we could possibly close, but since these are the main output streams,
+    // we'll just flush the buffers.
+    dout.flush();
+    derr.flush();
 }
 
 void useCStdio()
 {
-    din = FInput(core.stdc.stdio.stdin);
-    dout = FOutput(core.stdc.stdio.stdout);
-    derr = FOutput(core.stdc.stdio.stderr);
+    din.construct(core.stdc.stdio.stdin);
+    dout.construct(core.stdc.stdio.stdout);
+    derr.construct(core.stdc.stdio.stderr);
 }
 
 /***********************************
