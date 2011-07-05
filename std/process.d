@@ -329,9 +329,9 @@ public:
 */
 
 Pid spawnProcess(string command,
-    File stdin_ = std.stdio.stdin,
-    File stdout_ = std.stdio.stdout,
-    File stderr_ = std.stdio.stderr,
+    File stdin_ = std.stdio.rawdin,
+    File stdout_ = std.stdio.rawdout,
+    File stderr_ = std.stdio.rawderr,
     Config config = Config.none)
 {
     auto splitCmd = split(command);
@@ -343,9 +343,9 @@ Pid spawnProcess(string command,
 
 /// ditto
 Pid spawnProcess(string command, string[string] environmentVars,
-    File stdin_ = std.stdio.stdin,
-    File stdout_ = std.stdio.stdout,
-    File stderr_ = std.stdio.stderr,
+    File stdin_ = rawdin,
+    File stdout_ = rawdout,
+    File stderr_ = rawderr,
     Config config = Config.none)
 {
     auto splitCmd = split(command);
@@ -357,9 +357,9 @@ Pid spawnProcess(string command, string[string] environmentVars,
 
 /// ditto
 Pid spawnProcess(string name, const string[] args,
-    File stdin_ = std.stdio.stdin,
-    File stdout_ = std.stdio.stdout,
-    File stderr_ = std.stdio.stderr,
+    File stdin_ = rawdin,
+    File stdout_ = rawdout,
+    File stderr_ = rawderr,
     Config config = Config.none)
 {
     return spawnProcessImpl(name, args,
@@ -371,9 +371,9 @@ Pid spawnProcess(string name, const string[] args,
 /// ditto
 Pid spawnProcess(string name, const string[] args,
     string[string] environmentVars,
-    File stdin_ = std.stdio.stdin,
-    File stdout_ = std.stdio.stdout,
-    File stderr_ = std.stdio.stderr,
+    File stdin_ = rawdin,
+    File stdout_ = rawdout,
+    File stderr_ = rawderr,
     Config config = Config.none)
 {
     return spawnProcessImpl(name, args,
@@ -881,7 +881,7 @@ ProcessPipes pipeProcess(string name, string[] args,
     }
     else
     {
-        stdinFile = std.stdio.stdin;
+        stdinFile = rawdin;
     }
 
     if (redirectFlags & Redirect.stdout)
@@ -895,7 +895,7 @@ ProcessPipes pipeProcess(string name, string[] args,
     }
     else
     {
-        stdoutFile = std.stdio.stdout;
+        stdoutFile = rawdout;
     }
 
     if (redirectFlags & Redirect.stderr)
@@ -909,7 +909,7 @@ ProcessPipes pipeProcess(string name, string[] args,
     }
     else
     {
-        stderrFile = std.stdio.stderr;
+        stderrFile = rawderr;
     }
 
     if (redirectFlags & Redirect.stdoutToStderr)
@@ -918,8 +918,8 @@ ProcessPipes pipeProcess(string name, string[] args,
         {
             // We know that neither of the other options have been
             // set, so we assign the std.stdio.std* streams directly.
-            stdoutFile = std.stdio.stderr;
-            stderrFile = std.stdio.stdout;
+            stdoutFile = rawderr;
+            stderrFile = rawdout;
         }
         else
         {

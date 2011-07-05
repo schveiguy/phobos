@@ -21,6 +21,7 @@ import std.traits;
 import std.range;
 import std.utf;
 import std.conv;
+import std.typecons;
 
 version (DigitalMars) version (Windows)
 {
@@ -364,14 +365,19 @@ class File : InputStream, OutputStream
     // the file on destruction.
     //
     // fd is set to -1 when the stream is closed
-    protected int fd = -1;
+    private int fd = -1;
+
+    // flag indicating the destructor should not close the stream.  Useful when
+    // a File does not own the fd in question.
+    private bool _closeOnDestroy;
 
     /**
      * Construct an input stream based on the file descriptor
      */
-    this(int fd)
+    this(int fd, bool closeOnDestroy = true)
     {
         this.fd = fd;
+        this._closeOnDestroy = closeOnDestroy;
     }
 
     /**
@@ -491,7 +497,10 @@ class File : InputStream, OutputStream
      */
     ~this()
     {
-        close();
+        if(_closeOnDestroy)
+            close();
+        else
+            fd = -1;
     }
 
     @property int handle()
@@ -505,7 +514,7 @@ class File : InputStream, OutputStream
  * system implemented in D.  Contrast this with the CStream which
  * uses C's FILE* abstraction.
  */
-class DBufferedInput : BufferedInput
+class DInput : BufferedInput
 {
     protected
     {
@@ -869,12 +878,12 @@ class DBufferedInput : BufferedInput
     }
 }
 
-class DBufferedOutput : BufferedOutput
+class DOutput : BufferedOutput
 {
     protected
     {
         // the source stream
-        OutputStream output;
+        OutputStream _output;
 
         // the buffered data
         ubyte[] buffer;
@@ -902,11 +911,16 @@ class DBufferedOutput : BufferedOutput
      */
     this(OutputStream output, uint bufsize = PAGE * 10)
     {
-        this.output = output;
+        this._output = output;
         this.buffer = new ubyte[bufsize];
 
         // ensure we aren't wasting any space.
         this.buffer.length = this.buffer.capacity;
+    }
+
+    @property OutputStream output()
+    {
+        return _output;
     }
 
     /+ commented out for now, not sure how shared classes are going to work for I/O
@@ -1086,7 +1100,7 @@ class DBufferedOutput : BufferedOutput
         case Anchor.Current:
             if(delta == 0)
                 // special case for tell
-                return output.tell() + writepos;
+                return _output.tell() + writepos;
             
             // else go to the normal case of simply flushing and seeking.
             // Otherwise, the data we have written to the buffer could be
@@ -1096,7 +1110,7 @@ class DBufferedOutput : BufferedOutput
         case Anchor.Begin, Anchor.End:
             // flush the buffer and seek the underlying stream
             flush();
-            return output.seek(delta, whence);
+            return _output.seek(delta, whence);
 
         default:
             // TODO: throw an exception
@@ -1106,7 +1120,7 @@ class DBufferedOutput : BufferedOutput
 
     override @property bool seekable() const
     {
-        return output.seekable();
+        return _output.seekable();
     }
 
     @property size_t bufsize()
@@ -1132,7 +1146,7 @@ class DBufferedOutput : BufferedOutput
     override void close()
     {
         flush();
-        output.close();
+        _output.close();
     }
 
     override void flush()
@@ -1209,7 +1223,7 @@ class DBufferedOutput : BufferedOutput
         size_t result;
         while(minsize > 0)
         {
-            auto nwritten = output.put(data);
+            auto nwritten = _output.put(data);
             if(!nwritten) // eof
                 break;
             result += nwritten;
@@ -1222,16 +1236,16 @@ class DBufferedOutput : BufferedOutput
 
 struct ByChunk
 {
-    private DBufferedInput _input;
+    private DInput _input;
     private size_t _size;
     private const(ubyte)[] _curchunk;
 
     this(InputStream input, size_t size)
     {
-        this(new DBufferedInput(input), size);
+        this(new DInput(input), size);
     }
 
-    this(DBufferedInput dbi, size_t size)
+    this(DInput dbi, size_t size)
     in
     {
         assert(size, "size cannot be greater than zero");
@@ -1279,21 +1293,15 @@ class CStream : BufferedInput, BufferedOutput
         FILE *source;
         char *_buf; // C malloc'd buffer used to support getDelim
         size_t _bufsize; // size of buffer
-        ubyte _charwidth; // width of the stream (orientation)
-        bool _locked; // whether the stream is locked or not.
+        bool _closeOnDestroy; // do not close stream from destructor
     }
 
-    enum GROW_SIZE = 1024; // optimized for FILE buffer sizes
-
     /**
-     * Note, source must ALWAYS be a virgin stream.  That is, there should not
-     * have been an i/o operation on the stream, or the buffering will not work
-     * properly.
      */
-    this(FILE *source)
+    this(FILE *source, bool closeOnDestroy = true)
     {
         this.source = source;
-        this._charwidth = .fwide(source, 0) < 0 ? 1 : 2;
+        this._closeOnDestroy = !closeOnDestroy;
     }
 
     // comment out for now, not sure how this will work.
@@ -1345,21 +1353,14 @@ class CStream : BufferedInput, BufferedOutput
 
     override size_t read(ubyte[] data)
     {
-        if(_charwidth == 1)
+        size_t result = .fread(data.ptr, ubyte.sizeof, data.length, source);
+        if(result < data.length)
         {
-            size_t result = .fread(data.ptr, ubyte.sizeof, data.length, source);
-            if(result < data.length)
-            {
-                // could be error or eof, check error
-                if(ferror(source))
-                    throw new Exception("Error reading");
-            }
-            return result;
+            // could be error or eof, check error
+            if(ferror(source))
+                throw new Exception("Error reading");
         }
-        else
-        {
-            // wide character mode, need to use fgetwc
-        }
+        return result;
     }
 
     const(ubyte)[] readln(const(ubyte)[] lineterm)
@@ -1400,19 +1401,12 @@ class CStream : BufferedInput, BufferedOutput
     // BufferedOutput interface
     void put(const(ubyte)[] data)
     {
-        if(_charwidth == 1)
+        // optimized, just write using fwrite.
+        auto result = fwrite(data.ptr, ubyte.sizeof, data.length, source);
+        if(result < data.length)
         {
-            // optimized, just write using fwrite.
-            auto result = fwrite(data.ptr, ubyte.sizeof, data.length, source);
-            if(result < data.length)
-            {
-                derr.writeln("Error writing data: ", result, " ", data.length);
-                throw new Exception("Error writing data");
-            }
-        }
-        else
-        {
-            // in wide mode, we must use FPUTWC
+            stderr.writeln("Error writing data: ", result, " ", data.length);
+            throw new Exception("Error writing data");
         }
     }
 
@@ -1424,6 +1418,8 @@ class CStream : BufferedInput, BufferedOutput
     // just in case close isn't called before the GC gets to this object.
     ~this()
     {
+        if(!_closeOnDestroy)
+            source = null;
         close();
     }
 
@@ -1438,17 +1434,17 @@ struct TextInput
 {
     private BufferedInput input;
 
-    void construct(InputStream ins)
+    void bind(InputStream ins)
     {
-        construct(new DBufferedInput(ins));
+        bind(new DInput(ins));
     }
 
-    void construct(FILE *fp)
+    void bind(FILE *fp)
     {
-        construct(new CStream(fp));
+        bind(new CStream(fp));
     }
 
-    void construct(BufferedInput input)
+    void bind(BufferedInput input)
     {
         this.input = input;
     }
@@ -1467,7 +1463,7 @@ struct TextInput
  */
 enum StreamWidth : ubyte
 {
-    /// Determine width on first access (valid only for CStream streams)
+    /// Determine width from stream itself (valid only for D-based TextInput)
     AUTO = 0,
 
     /// 8 bit width
@@ -1533,54 +1529,66 @@ private void __swapBytes(ubyte[] data, ubyte charwidth)
 // the heap or in the global segment.
 struct TextOutput
 {
-    // the actual buffered output stream.
-    private BufferedOutput _output;
+    private struct Impl
+    {
+        // the actual buffered output stream.
+        BufferedOutput output;
+
+        // this is settable at runtime because the interface to a text stream
+        // is independent of the character width being sent to it.  Otherwise,
+        // it would not be possible to say, for example, change the output
+        // width to wchar for stdou.
+        ubyte charwidth;
+
+        void encode(ubyte[] data)
+        {
+            __swapBytes(data, charwidth);
+        }
+
+        ptrdiff_t flushLineCheckT(T)(const(T)[] data)
+        {
+            for(const(T)* i = data.ptr + data.length - 1; i >= data.ptr; --i)
+            {
+                if(*i == cast(T)'\n')
+                    return (i - data.ptr + 1) * T.sizeof;
+            }
+            return -1;
+        }
+
+        ptrdiff_t flushLineCheck(const(ubyte)[] data)
+        {
+            switch(charwidth)
+            {
+            case 1:
+                return flushLineCheckT(cast(const(char)[])data);
+            case 2:
+                return flushLineCheckT(cast(const(wchar)[])data);
+            case 4:
+                return flushLineCheckT(cast(const(dchar)[])data);
+            default:
+                assert(0, "invalid width");
+            }
+        }
+
+    }
+
+    // the implementation pointer.
+    private Impl* _impl;
 
     /**
      * Fetch the buffered output stream that backs this text outputter
      */
     @property BufferedOutput output()
     {
-        return _output;
+        return _impl.output;
     }
 
-    // this is settable at runtime because the interface to a text stream is
-    // independent of the character width being sent to it.  Otherwise, it
-    // would not be possible to say, for example, change the output width to
-    // wchar for stdou.
-    private ubyte _charwidth;
-
-    private void encode(ubyte[] data)
+    void bind(OutputStream outs, StreamWidth width = StreamWidth.UTF8, ByteOrder bo = ByteOrder.Native)
     {
-        __swapBytes(data, _charwidth);
+        bind(new DOutput(outs), width, bo);
     }
 
-    private ptrdiff_t flushLineCheckT(T)(const(T)[] data)
-    {
-        for(const(T)* i = data.ptr + data.length - 1; i >= data.ptr; --i)
-        {
-            if(*i == cast(T)'\n')
-                return (i - data.ptr + 1) * T.sizeof;
-        }
-        return -1;
-    }
-
-    private ptrdiff_t flushLineCheck(const(ubyte)[] data)
-    {
-        switch(_charwidth)
-        {
-        case 1:
-            return flushLineCheckT(cast(const(char)[])data);
-        case 2:
-            return flushLineCheckT(cast(const(wchar)[])data);
-        case 4:
-            return flushLineCheckT(cast(const(dchar)[])data);
-        default:
-            assert(0, "invalid width");
-        }
-    }
-
-    void construct(OutputStream outs, StreamWidth width = StreamWidth.UTF8, ByteOrder bo = ByteOrder.Native)
+    void bind(DOutput dbo, StreamWidth width = StreamWidth.UTF8, ByteOrder bo = ByteOrder.Native)
     in
     {
         // don't support auto width.
@@ -1591,22 +1599,28 @@ struct TextOutput
     }
     body
     {
-        auto dbo = new DBufferedOutput(outs);
+        if(!_impl)
+            _impl = new Impl;
+
         if(width != StreamWidth.UTF8)
         {
             version(LittleEndian)
             {
                 if(bo == ByteOrder.Big)
-                    dbo.encoder = &encode;
+                    dbo.encoder = &_impl.encode;
+                else
+                    dbo.encoder = null;
             }
             else
             {
                 if(bo == ByteOrder.Little)
-                    dbo.encoder = &encode;
+                    dbo.encoder = &_impl.encode;
+                else
+                    dbo.encoder = null;
             }
         }
 
-        if(auto f = cast(File)outs)
+        if(auto f = cast(File)dbo.output)
         {
             // this is a device stream, check to see if it's a terminal
             version(Posix)
@@ -1614,73 +1628,55 @@ struct TextOutput
                 if(isatty(f.handle))
                 {
                     // by default, do a flush check based on a newline
-                    dbo.flushCheck = &flushLineCheck;
+                    dbo.flushCheck = &_impl.flushLineCheck;
                 }
             }
             else
                 static assert(0, "Unsupported OS");
         }
-        construct(dbo, width);
+        bindImpl(dbo, width);
     }
 
-    void construct(FILE *outs, StreamWidth width = StreamWidth.AUTO)
-    in
+    void bind(FILE *outs)
     {
-        // don't support 32-bit width for C streams
-        assert(width == StreamWidth.UTF8 || width == StreamWidth.UTF16 ||
-               width == StreamWidth.AUTO);
+        bindImpl(new CStream(outs), StreamWidth.UTF8);
     }
-    body
+
+    void bind(CStream cstr)
     {
-        int mode = void;
-        switch(width)
-        {
-        case StreamWidth.AUTO:
-            mode = 0;
-            break;
-
-        case StreamWidth.UTF8:
-            mode = -1;
-            break;
-
-        case StreamWidth.UTF16:
-            mode = 1;
-            break;
-
-        default:
-            assert(0, "Invalid width");
-        }
-
-        if(.fwide(outs, mode) < 0)
-            width = StreamWidth.UTF8;
-        else
-            width = StreamWidth.UTF16;
-        construct(new CStream(outs), width);
+        bindImpl(cstr, StreamWidth.UTF8);
     }
 
-    void construct(BufferedOutput outs, StreamWidth width = StreamWidth.UTF8)
+    private void bindImpl(BufferedOutput outs, StreamWidth width = StreamWidth.UTF8)
     in
     {
         assert(width == StreamWidth.UTF8 || width == StreamWidth.UTF16 ||
-               width == StreamWidth.UTF32 || width == StreamWidth.AUTO);
+               width == StreamWidth.UTF32);
     }
     body
     {
-        this._output = outs;
-        this._charwidth = width;
+        if(!_impl)
+            _impl = new Impl;
+        this._impl.output = outs;
+        this._impl.charwidth = width;
     }
 
     void write(S...)(S args)
+    in
     {
-        switch(_charwidth)
+        assert(_impl !is null);
+    }
+    body
+    {
+        switch(_impl.charwidth)
         {
-        case 1:
+        case StreamWidth.UTF8:
             priv_write!(char)(args);
             break;
-        case 2:
+        case StreamWidth.UTF16:
             priv_write!(wchar)(args);
             break;
-        case 4:
+        case StreamWidth.UTF32:
             priv_write!(dchar)(args);
             break;
         default:
@@ -1689,16 +1685,21 @@ struct TextOutput
     }
 
     void writeln(S...)(S args)
+    in
     {
-        switch(_charwidth)
+        assert(_impl !is null);
+    }
+    body
+    {
+        switch(_impl.charwidth)
         {
-        case 1:
+        case StreamWidth.UTF8:
             priv_write!(char)(args, '\n');
             break;
-        case 2:
+        case StreamWidth.UTF16:
             priv_write!(wchar)(args, '\n');
             break;
-        case 4:
+        case StreamWidth.UTF32:
             priv_write!(dchar)(args, '\n');
             break;
         default:
@@ -1709,7 +1710,7 @@ struct TextOutput
     private void priv_write(C, S...)(S args)
     {
         //_output.begin();
-        auto w = OutputRange!C(_output);
+        auto w = OutputRange!C(_impl.output);
 
         foreach(arg; args)
         {
@@ -1744,15 +1745,15 @@ struct TextOutput
     {
         static assert(S.length > 0, errorMessage);
         static assert(isSomeString!(S[0]), errorMessage);
-        switch(_charwidth)
+        switch(_impl.charwidth)
         {
-        case 1:
+        case StreamWidth.UTF8:
             priv_writef!(char, false)(args);
             break;
-        case 2:
+        case StreamWidth.UTF16:
             priv_writef!(wchar, false)(args);
             break;
-        case 4:
+        case StreamWidth.UTF32:
             priv_writef!(dchar, false)(args);
             break;
         default:
@@ -1764,15 +1765,15 @@ struct TextOutput
     {
         static assert(S.length > 0, errorMessage);
         static assert(isSomeString!(S[0]), errorMessage);
-        switch(_charwidth)
+        switch(_impl.charwidth)
         {
-        case 1:
+        case StreamWidth.UTF8:
             priv_writef!(char, true)(args);
             break;
-        case 2:
+        case StreamWidth.UTF16:
             priv_writef!(wchar, true)(args);
             break;
-        case 4:
+        case StreamWidth.UTF32:
             priv_writef!(dchar, true)(args);
             break;
         default:
@@ -1785,7 +1786,7 @@ struct TextOutput
         static assert(S.length > 0, errorMessage);
         static assert(isSomeString!(S[0]), errorMessage);
         //_output.begin();
-        auto w = OutputRange!C(_output);
+        auto w = OutputRange!C(_impl.output);
         std.format.formattedWrite(w, args);
         static if(doNewline)
         {
@@ -1836,19 +1837,19 @@ struct TextOutput
             }
             else
             {
-                static if(CT.sizeof == 1)
+                static if(is(CT == char))
                 {
                     // convert the character to utf8
                     char[4] buf = void;
                     output.put(cast(ubyte[])std.utf.toUTF8(buf, c));
                 }
-                else static if(CT.sizeof == 2)
+                else static if(is(CT == wchar))
                 {
                     // convert the character to utf16
                     wchar[2] buf = void;
                     output.put(cast(ubyte[])std.utf.toUTF16(buf, c));
                 }
-                else static if(CT.sizeof == 4)
+                else static if(is(CT == dchar))
                 {
                     // converting to utf32, just write directly
                     dchar dc = c;
@@ -1862,65 +1863,133 @@ struct TextOutput
     }
 
     void flush()
+    in
     {
-        _output.flush();
+        assert(_impl);
+    }
+    body
+    {
+        _impl.output.flush();
     }
 
     void close()
+    in
     {
-        _output.close();
+        assert(_impl);
+    }
+    body
+    {
+        if(_impl && _impl.output)
+        {
+            _impl.output.close();
+            _impl.output = null;
+        }
+    }
+
+    void setWidth(StreamWidth width)
+    in
+    {
+        assert(width == StreamWidth.UTF8 || width == StreamWidth.UTF16 || width == StreamWidth.UTF32);
+        assert(_impl);
+    }
+    body
+    {
+        _impl.charwidth = width;
+    }
+
+    /**
+     * Writes a BOM to the stream unless the stream is UTF8.  If force flag is
+     * set to true, a UTF8 BOM is still written.
+     */
+    void writeBOM(bool force = false)
+    in
+    {
+        assert(_impl);
+    }
+    body
+    {
+        if(force || _impl.charwidth != StreamWidth.UTF8)
+        {
+            write(cast(dchar)0xFEFF);
+        }
     }
 }
 
-auto openFile(string mode = "r")(string fname)
+/**
+ * Open a buffered file stream according to the mode string.  The mode string
+ * is a template argument to allow returning different types based on the mode.
+ *
+ * The mode string follows the conventions of File.open
+ *
+ * Note that if mode indicates the stream is read and write (i.e. it contains a
+ * '+'), a tuple(input, output) is returned.
+ */
+auto openFile(string mode = "rb")(string fname)
 {
-    static if(mode == "r")
-        return new DBufferedInput(File.open(fname, mode));
+    auto base = File.open(fname, mode);
+    static if(mode == "r" || mode == "rb")
+        return new DInput(base);
+    else static if(mode == "w" || mode == "a" || mode == "wb" || mode == "ab")
+        return new DOutput(base);
+    else static if(mode == "w+" || mode == "r+" || mode == "a+" || 
+                   mode == "w+b" || mode == "r+b" || mode == "a+b" || 
+                   mode == "wb+" || mode == "rb+" || mode == "ab+")
+        return tuple(new DInput(base), new DOutput(base));
     else
         static assert(0, "mode not supported for openFile: " ~ mode);
 }
 
+//TODO: make these shared.
 __gshared {
 
-    File stdin;
-    File stdout;
-    File stderr;
+    // Raw unbuffered i/o streams.
+    // TODO: need better names for these
+    File rawdin;
+    File rawdout;
+    File rawderr;
 
-    TextInput din;
-    TextOutput dout;
-    TextOutput derr;
+    // Buffered  i/o streams
+    DInput din;
+    DOutput dout;
+    DOutput derr;
+
+    // Text i/o
+    TextInput stdin;
+    TextOutput stdout;
+    TextOutput stderr;
 }
 
 shared static this()
 {
     version(linux)
     {
-        stdin = new File(0);
-        stdout = new File(1);
-        stderr = new File(2);
+        din = new DInput(rawdin = new File(0, false));
+        dout = new DOutput(rawdout = new File(1, false));
+        derr = new DOutput(rawderr = new File(2, false));
     }
     else
         static assert(0, "Unsupported OS");
 
     // set up the shared buffered streams
-    din.construct(stdin);
-    dout.construct(stdout);
-    derr.construct(stderr);
+    stdin.bind(din);
+    stdout.bind(dout);
+    stderr.bind(derr);
 }
 
+@property 
 shared static ~this()
 {
     // we could possibly close, but since these are the main output streams,
     // we'll just flush the buffers.
-    dout.flush();
-    derr.flush();
+    stdout.flush();
+    stderr.flush();
 }
 
 void useCStdio()
 {
-    din.construct(core.stdc.stdio.stdin);
-    dout.construct(core.stdc.stdio.stdout);
-    derr.construct(core.stdc.stdio.stderr);
+    stdin.bind(new CStream(core.stdc.stdio.stdin, false));
+    stdout.bind(new CStream(core.stdc.stdio.stdout, false));
+    stderr.bind(new CStream(core.stdc.stdio.stderr, false));
 }
 
 /***********************************
@@ -1933,7 +2002,7 @@ Throws: In case of an I/O error, throws an $(D StdioException).
  */
 void write(T...)(T args) if (!is(T[0] : File))
 {
-    dout.write(args);
+    stdout.write(args);
 }
 
 unittest
@@ -1963,7 +2032,7 @@ unittest
 // Most general instance
 void writeln(T...)(T args)
 {
-    dout.writeln(args);
+    stdout.writeln(args);
 }
 
 unittest
@@ -2040,7 +2109,7 @@ to write numbers in platform-native format.
 
 void writef(T...)(T args)
 {
-    dout.writef(args);
+    stdout.writef(args);
 }
 
 unittest
@@ -2068,7 +2137,7 @@ unittest
  */
 void writefln(T...)(T args)
 {
-    dout.writefln(args);
+    stdout.writefln(args);
 }
 
 unittest
