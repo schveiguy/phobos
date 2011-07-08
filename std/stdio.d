@@ -16,7 +16,7 @@ module std.stdio;
 import std.format;
 import std.string;
 import core.memory, core.stdc.errno, core.stdc.stddef, core.stdc.stdlib,
-    core.stdc.string, core.stdc.wchar_;
+    core.stdc.string, core.stdc.wchar_, core.bitop;
 import std.traits;
 import std.range;
 import std.utf;
@@ -532,11 +532,22 @@ class DInput : BufferedInput
         size_t minReadSize;
 
         // the current position
-        uint readpos = 0;
+        size_t readpos = 0;
 
         // the position just beyond the last valid data.  This is like the end
         // of the valid data.
-        uint valid = 0;
+        size_t valid = 0;
+
+        // a decoder function.  When set, this decodes data coming in.  This is
+        // useful for cases where for example byte-swapping must be done.  It
+        // should return the number of bytes processed (for example, if you are
+        // byte-swapping every 2 bytes, and data contains an odd number of
+        // bytes, you cannot process the last byte.
+        size_t delegate(ubyte[] data) _decode;
+
+        // the number of bytes already decoded (always set to valid if _decode
+        // is unset)
+        size_t decoded = 0;
     }
 
     /**
@@ -561,37 +572,153 @@ class DInput : BufferedInput
         // determine if there is any data in the buffer.
         if(data.length)
         {
-            if(readpos < valid)
+            // save this for later so we can decode the data.
+            auto origdata = data;
+            size_t origdata_decoded = decoded - readpos;
+            if(decoded < valid)
             {
-                size_t nread = readpos + data.length;
-                if(nread > valid)
-                    nread = valid;
-                result = nread - readpos;
-                data[0..result] = buffer[readpos..nread];
-                readpos = nread;
-                data = data[result..$];
-            }
-            // at this point, either there is no data left in the buffer, or we
-            // have filled up data.
-            if(data.length)
-            {
-                // still haven't filled it up.  Try at least one read from the
-                // input stream.
-                if(data.length >= minReadSize)
+                // there's some leftover undecoded data in the buffer.  the
+                // expectation is that this data is small in size, so it can be
+                // moved to the front of the buffer efficiently.  We don't read
+                // data into a buffer without trying to decode it.
+                //
+                if(origdata_decoded >= data.length)
                 {
-                    // data length is long enough to read into it directly.
-                    return result + input.read(data);
+                    // already decoded data will satisfy the read request, just
+                    // copy and move the read pointer.
+                    data[] = buffer[readpos..readpos+data.length];
+                    readpos += data.length;
+                    // shortcut, no need to deal with decoding anything.
+                    return data.length;
                 }
-                // else, fill the buffer.  Even though we will be copying data,
-                // it's probably more efficient than reading small chunks
-                // from the stream.
-                auto nread = input.read(buffer);
-                if(nread > 0)
+
+                // else, there is at least some non-decoded data we have to
+                // deal with.  If it makes sense to read directly into the data
+                // buffer, then don't bother moving the data to the front of
+                // the buffer, we'll read directly into the data.
+                ptrdiff_t nleft = data.length - (valid - readpos);
+                if(nleft >= minReadSize)
                 {
-                    readpos = data.length > nread ? nread : data.length;
-                    valid = nread;
-                    data[0..readpos] = buffer[0..readpos];
-                    result += readpos;
+                    // read directly into data.
+                    result = valid - readpos;
+                    data[0..result] = buffer[readpos..valid];
+                    result += input.read(data[result..$]);
+                    readpos = decoded = valid = 0; // reset buffer
+                    // we will decode the data later.
+                }
+                else
+                {
+                    // too small to read into data directly, read into the
+                    // buffer.
+                    result = origdata_decoded;
+                    data[0..origdata_decoded] = buffer[readpos..decoded];
+                    if(buffer.length - valid < minReadSize)
+                    {
+                        // move the undecoded data to the front of the buffer,
+                        // then read
+                        memmove(buffer.ptr, buffer.ptr + decoded, valid - decoded);
+                        valid -= decoded;
+                        decoded = 0;
+                    }
+                    // else no need to move, plenty of space in the buffer
+                    readpos = decoded;
+                    valid += input.read(buffer[valid..$]);
+                    assert(valid <= buffer.length);
+
+                    // encode the data
+                    if(_decode)
+                        decoded += _decode(buffer[decoded..valid]);
+                    else
+                        decoded = valid;
+
+                    // copy as much decoded data as possible.
+                    auto ncopy = decoded - readpos;
+                    if(ncopy > data.length)
+                        ncopy = data.length;
+                    data[origdata_decoded..origdata_decoded+ncopy] =
+                        buffer[readpos..readpos+ncopy];
+                    readpos += ncopy;
+
+                    // no more decoding needed, shortcut the execution.
+                    return result + ncopy;
+                }
+            }
+            else
+            {
+                // no undecoded data.
+                if(readpos < valid)
+                {
+                    size_t nread = readpos + data.length;
+                    if(nread > valid)
+                        nread = valid;
+                    result = nread - readpos;
+                    data[0..result] = buffer[readpos..nread];
+                    readpos = nread;
+                    data = data[result..$];
+                }
+                // at this point, either there is no data left in the buffer, or we
+                // have filled up data.
+                if(data.length)
+                {
+                    // still haven't filled it up.  Try at least one read from the
+                    // input stream.
+                    if(data.length >= minReadSize)
+                    {
+                        // data length is long enough to read into it directly.
+                        result += input.read(data);
+                    }
+                    else
+                    {
+                        // else, fill the buffer.  Even though we will be copying
+                        // data, it's probably more efficient than reading small
+                        // chunks from the stream.
+                        valid = input.read(buffer);
+                        if(valid > 0)
+                        {
+                            // decode the newly read data
+                            if(_decode)
+                                decoded = _decode(buffer[0..valid]);
+                            else
+                                decoded = valid;
+                            readpos = data.length > decoded ? decoded : data.length;
+                            data[0..readpos] = buffer[0..readpos];
+                        }
+                        else
+                        {
+                            readpos = decoded = valid = 0;
+                        }
+                        return result + readpos;
+                    }
+                }
+            }
+
+            // now, we need to possibly decode data that's ready to be
+            // returned.
+            if(_decode && origdata_decoded < result)
+            {
+                origdata_decoded += _decode(origdata[origdata_decoded..result]);
+                // any data that was not decoded needs to go back to the
+                // buffer.
+                if(origdata_decoded < result)
+                {
+                    auto ntocopy = result - origdata_decoded;
+                    if(readpos != valid)
+                    {
+                        // this should only happen if the buffer has enough
+                        // space to store the data that wasn't already decoded.
+                        assert(readpos >= ntocopy);
+                        readpos -= ntocopy;
+                        buffer[readpos..readpos + ntocopy] =
+                            origdata[origdata_decoded..result];
+                    }
+                    else
+                    {
+                        //  no data in the buffer, reset everything
+                        buffer[0..ntocopy] = origdata[origdata_decoded..result];
+                        readpos = decoded = 0;
+                        valid = ntocopy;
+                    }
+                    result = origdata_decoded;
                 }
             }
         }
@@ -662,7 +789,7 @@ class DInput : BufferedInput
     {
         // read data from the buffer/stream until the condition is met,
         // expanding the buffer as necessary
-        auto d = buffer[readpos..valid];
+        auto d = buffer[readpos..decoded];
         auto status = d.length ? process(d, 0) : ~0;
 
         // TODO: this simple version always moves data to the front
@@ -672,6 +799,7 @@ class DInput : BufferedInput
         if(status == ~0 && readpos > 0)
         {
             memmove(buffer.ptr, buffer.ptr + readpos, valid -= readpos);
+            decoded -= readpos;
             readpos = 0;
         }
 
@@ -690,13 +818,20 @@ class DInput : BufferedInput
             if(!nread)
             {
                 // no more data available from the stream, process the EOF
-                process(buffer[0..valid], valid);
-                status = valid;
+                process(buffer[0..decoded], decoded);
+                status = decoded;
             }
             else
             {
-                status = process(buffer[0..valid + nread], valid);
+                // record the new valid, then use nread to mean the number of
+                // newly decoded bytes.
                 valid += nread;
+                if(_decode)
+                    nread = _decode(buffer[decoded..valid]);
+                else
+                    nread = valid - decoded;
+                status = process(buffer[0..decoded + nread], decoded);
+                decoded += nread;
             }
         }
 
@@ -736,13 +871,14 @@ class DInput : BufferedInput
     {
         // read data from the buffer/stream until the condition is met,
         // expanding the input array as necessary
-        auto d = buffer[readpos..valid];
-        size_t status = void;
+        auto d = buffer[readpos..decoded];
+        size_t status = ~0;
         size_t avalid = 0;
+        size_t adecoded = 0;
         if(d.length)
         {
             // see if the buffer satisfies
-            status = d.length ? process(d, 0) : ~0;
+            status = process(d, 0);
             if(status != ~0)
             {
                 // the buffer was enough, copy it to the array
@@ -756,6 +892,8 @@ class DInput : BufferedInput
             }
             // no satisfaction, copy the current buffer data to the array, and
             // continue.
+            d = buffer[readpos..valid];
+            adecoded = decoded - readpos;
             if(arr.length < d.length)
             {
                 arr.length = d.length + growSize;
@@ -765,7 +903,7 @@ class DInput : BufferedInput
             arr[0..d.length] = d[];
             avalid = d.length;
             // clear out the buffer.
-            readpos = valid = 0;
+            readpos = valid = decoded = 0;
         }
 
 
@@ -782,17 +920,25 @@ class DInput : BufferedInput
             if(!nread)
             {
                 // no more data available from the stream, process the EOF
-                process(arr[0..avalid], avalid);
+                process(arr[0..adecoded], adecoded);
                 status = avalid;
             }
             else
             {
-                status = process(arr[0..avalid + nread], avalid);
                 avalid += nread;
+                if(_decode)
+                    nread = _decode(arr[adecoded..avalid]);
+                else
+                    nread = avalid - adecoded;
+                if(nread)
+                {
+                    status = process(arr[0..adecoded + nread], adecoded);
+                    adecoded += nread;
+                }
             }
         }
 
-        assert(status <= avalid);
+        assert(status <= avalid && status <= adecoded);
         // data has been processed, put back any data that wasn't processed.
         auto putback = avalid - status;
         if(buffer.length < putback)
@@ -801,6 +947,7 @@ class DInput : BufferedInput
         }
         buffer[0..putback] = arr[status..avalid];
         valid = putback;
+        decoded = adecoded - status;
         readpos = 0;
         return status;
     }
@@ -813,7 +960,7 @@ class DInput : BufferedInput
             // see if we can see within the buffer
             {
                 auto target = readpos + delta;
-                if(target < 0 || target > valid)
+                if(target < 0 || target > decoded)
                 {
                     delta -= (valid - readpos);
                     goto case Anchor.Begin;
@@ -829,7 +976,7 @@ class DInput : BufferedInput
 
         case Anchor.Begin, Anchor.End:
             // reset the buffer and seek the underlying stream
-            readpos = valid = 0;
+            readpos = valid = decoded = 0;
             return input.seek(delta, whence);
 
         default:
@@ -850,13 +997,13 @@ class DInput : BufferedInput
 
     @property size_t readable()
     {
-        return valid - readpos;
+        return decoded - readpos;
     }
 
     override void close()
     {
         input.close();
-        readpos = valid = 0;
+        readpos = valid = decoded = 0;
     }
 
     /*override void begin() shared
@@ -1429,10 +1576,196 @@ class CStream : BufferedInput, BufferedOutput
     }
 }
 
+/**
+ * The width of the text stream
+ */
+enum StreamWidth : ubyte
+{
+    /// Determine width from stream itself (valid only for D-based TextInput)
+    AUTO = 0,
+
+    /// 8 bit width
+    UTF8 = 1,
+
+    /// 16 bit width
+    UTF16 = 2,
+
+    /// 32 bit width
+    UTF32 = 4
+}
+
+/**
+ * The byte order of a text stream
+ */
+enum ByteOrder : ubyte
+{
+    /// Use native byte order (no encoding necessary).  This is the only
+    /// possibility for CStream streams.
+    Native,
+
+    /// Use Little Endian byte order.  Has no effect on 8-bit streams.
+    Little,
+
+    /// Use Big Endian byte order.  Has no effect on 8-bit streams.
+    Big
+}
+
+private void __swapBytes(ubyte[] data, ubyte charwidth)
+in
+{
+    assert(charwidth == wchar.sizeof || charwidth == dchar.sizeof);
+    assert(data.length % charwidth == 0);
+}
+body
+{
+    // depending on the char width, do byte swapping on the data stream.
+    switch(charwidth)
+    {
+    case wchar.sizeof:
+        // swap every 2 bytes
+        // do majority using uint
+        // TODO:  see if this can be optimized further, or if there are
+        // better options for 64-bit.
+        {
+            ushort[] sdata = cast(ushort[])data;
+            uint[] idata = cast(uint[])sdata[0..$ - ($ % 2)];
+            if(sdata.length % 2 != 0)
+            {
+                sdata[$-1] = ((sdata[$-1] << 8) & 0xff00) |
+                             ((sdata[$-1] >> 8) & 0x00ff);
+            }
+            foreach(ref t; idata)
+            {
+                t = ((t << 8) & 0xff00ff00) |
+                    ((t >> 8) & 0x00ff00ff);
+            }
+        }
+        break;
+    case dchar.sizeof:
+        // swap every 4 bytes
+        foreach(ref t; cast(uint[])data)
+        {
+            /*t = ((t << 24) & 0xff000000) |
+                ((t << 8)  & 0x00ff0000) |
+                ((t >> 8)  & 0x0000ff00) |
+                ((t >> 24) & 0x000000ff);*/
+            t = bswap(t);
+        }
+        break;
+    default:
+        assert(0, "invalid charwidth");
+    }
+}
+
+
 // formatted input stream
 struct TextInput
 {
-    private BufferedInput input;
+    private struct Impl
+    {
+        private BufferedInput input;
+        private StreamWidth width;
+        private ByteOrder bo;
+
+        void decode(ubyte[] data)
+        {
+            switch(width)
+            {
+            case StreamWidth.AUTO:
+                // auto width.  Look for a BOM.  If it's present, use it to
+                // decode the byte order and width.
+                //
+                // note that if the initial data read is less than 4 bytes,
+                // there is the potential that BOM won't be detected.  But this
+                // possibility is extremely rare.  However, we cannot ignore
+                // files that are less than 4 bytes in length.
+                if(data.length >= 4)
+                {
+                    if(data[0] == 0xFE && data[1] == 0xFF)
+                    {
+                        width = StreamWidth.UTF16;
+                        bo = ByteOrder.Big;
+                        goto case StreamWidth.UTF16;
+                    }
+                    else if(data[0] == 0xFF && data[1] == 0xFE)
+                    {
+                        // little endian BOM.
+                        bo = ByteOrder.Little;
+                        if(data[2] == 0 && data[3] == 0)
+                        {
+                            // most likely this is UTF32
+                            width = StreamWidth.UTF32;
+                            goto case StreamWidth.UTF32;
+                        }
+                        // utf-16
+                        width = StreamWidth.UTF16;
+                        goto case StreamWidth.UTF16;
+                    }
+                    else if(data[0] == 0 && data[1] == 0 && data[2] == 0xFE && data[3] == 0xFF)
+                    {
+                        bo = ByteOrder.Big;
+                        width = STreamWidth.UTF32;
+                        goto case StreamWidth.UTF32;
+                    }
+                }
+                // else this is utf8, bo is ignored.
+                width = StreamWidth.UTF8;
+                return data.length;// no decoding necessary
+
+            case StreamWidth.UTF8:
+                // no decoding necessary.
+                return data.length;
+
+            case StreamWidth.UTF16:
+                // 
+                data = data[0..$-($ % wchar.sizeof)];
+                version(LittleEndian)
+                {
+                    if(bo == ByteOrder.Big)
+                        __swapBytes(data, StreamWidth.UTF16);
+                }
+                else
+                {
+                    if(bo == ByteOrder.Little)
+                        __swapBytes(data, StreamWidth.UTF16);
+                }
+                return data.length;
+
+            case StreamWidth.UTF32:
+                // 
+                data = data[0..$-($ % dchar.sizeof)];
+                version(LittleEndian)
+                {
+                    if(bo == ByteOrder.Big)
+                        __swapBytes(data, StreamWidth.UTF32);
+                }
+                else
+                {
+                    if(bo == ByteOrder.Little)
+                        __swapBytes(data, StreamWidth.UTF32);
+                }
+                return data.length;
+
+            default:
+                assert(0, "invalid stream width");
+            }
+        }
+    }
+
+    private Impl* _impl;
+
+    /**
+     * Fetch the buffered input stream that backs this text outputter
+     */
+    @property BufferedOutput input()
+    in
+    {
+        assert(_impl);
+    }
+    body
+    {
+        return _impl.input;
+    }
 
     void bind(InputStream ins)
     {
@@ -1457,71 +1790,6 @@ struct TextInput
     Terminator terminator;
     KeepTerminator keepTerminator;
 }*/
-
-/**
- * The width of the text stream
- */
-enum StreamWidth : ubyte
-{
-    /// Determine width from stream itself (valid only for D-based TextInput)
-    AUTO = 0,
-
-    /// 8 bit width
-    UTF8 = 1,
-
-    /// 16 bit width
-    UTF16 = 2,
-
-    /// 32 bit width
-    UTF32 = 4
-}
-
-/**
- * The byte order of a text stream
- */
-enum ByteOrder
-{
-    /// Use native byte order (no encoding necessary).  This is the only
-    /// possibility for CStream streams.
-    Native,
-
-    /// Use Little Endian byte order.  Has no effect on 8-bit streams.
-    Little,
-
-    /// Use Big Endian byte order.  Has no effect on 8-bit streams.
-    Big
-}
-
-private void __swapBytes(ubyte[] data, ubyte charwidth)
-{
-    // depending on the char width, do byte swapping on the data stream.
-    assert(data.length % charwidth == 0);
-    switch(charwidth)
-    {
-    case wchar.sizeof:
-        // swap every 2 bytes
-        // TODO: optimize this
-        foreach(ref t; cast(ushort[])data)
-        {
-            t = ((t << 8) & 0xff00) |
-                ((t >> 8) & 0x00ff);
-        }
-        break;
-    case dchar.sizeof:
-        // swap every 4 bytes
-        // TODO: optimize this
-        foreach(ref t; cast(uint[])data)
-        {
-            t = ((t << 24) & 0xff000000) |
-                ((t << 8)  & 0x00ff0000) |
-                ((t >> 8)  & 0x0000ff00) |
-                ((t >> 24) & 0x000000ff);
-        }
-        break;
-    default:
-        assert(0, "invalid charwidth");
-    }
-}
 
 // formatted output stream
 //
