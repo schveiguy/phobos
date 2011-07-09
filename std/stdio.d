@@ -260,24 +260,6 @@ interface BufferedInput : Seek
     size_t read(ubyte[] data);
     
     /**
-     * Read a line from the stream.  Optionally you can give a line terminator
-     * other than '\n'
-     *
-     * Note that this does not take into account encoding of the file.  So if
-     * the file is encoded as UTF-16 text, this may not return a valid line.  
-     *
-     * The lineterm argument is treated as a binary encoding of the stream's
-     * data.  Note that some streams -- C streams in particular -- may be
-     * inefficient if you do more than one element in lineterm.
-     */
-    const(ubyte)[] readln(const(ubyte)[] lineterm);
-    /// ditto
-    final const(ubyte)[] readln(ubyte lineterm = '\n')
-    {
-        return readln((&lineterm)[0..1]);
-    }
-
-    /**
      * Close the stream.  This releases any resources from the object.
      */
     void close();
@@ -725,48 +707,6 @@ class DInput : BufferedInput
         return result;
     }
     
-    alias BufferedInput.readln readln;
-    final const(ubyte)[] readln(const(ubyte)[] lineterm)
-    {
-        immutable lastbyte = lineterm[$-1];
-        size_t _checkDelim1(const(ubyte)[] data, size_t start)
-        {
-            auto ptr = data.ptr + start;
-            auto end = data.ptr + data.length;
-            for(;ptr < end; ++ptr)
-            {
-                if(*ptr == lastbyte)
-                    break;
-            }
-            return ptr == end ? ~0 : ptr - data.ptr + 1;
-        }
-
-        size_t _checkDelimN(const(ubyte)[] data, size_t start)
-        {
-            // TODO; can try optimizing this
-            auto ptr = data.ptr + start + lineterm.length - 1;
-            auto end = data.ptr + data.length;
-            auto ltend = lineterm.ptr + lineterm.length - 1;
-            for(;ptr < end; ++ptr)
-            {
-                if(*ptr == lastbyte)
-                {
-                    // triggers a check
-                    auto ptr2 = ptr - lineterm.length + 1;
-                    auto ltptr = lineterm.ptr;
-                    for(; ltptr < ltend; ++ltptr, ++ptr2)
-                        if(*ltptr != *ptr2)
-                            break;
-                    if(ltptr == ltend)
-                        break;
-                }
-            }
-            return ptr >= end ? ~0 : ptr - data.ptr + 1;
-        }
-
-        return lineterm.length == 1 ? readUntil(&_checkDelim1) : readUntil(&_checkDelimN);
-    }
-
     /**
      * Read data until a condition is satisfied.
      *
@@ -785,7 +725,7 @@ class DInput : BufferedInput
      * condition.  Note that this data may be owned by the buffer and so
      * shouldn't be written to or stored for later use without duping.
      */
-    const(ubyte)[] readUntil(scope size_t delegate(const(ubyte)[] data, size_t start) process)
+    final const(ubyte)[] readUntil(scope size_t delegate(const(ubyte)[] data, size_t start) process)
     {
         // read data from the buffer/stream until the condition is met,
         // expanding the buffer as necessary
@@ -844,6 +784,57 @@ class DInput : BufferedInput
         else
             readpos = ep;
         return d;
+    }
+
+    /**
+     * Read until a certain sequence is found.  The returned data includes the
+     * sequence.
+     */
+    final const(ubyte)[] readUntil(const(ubyte)[] lineterm)
+    {
+        immutable lastbyte = lineterm[$-1];
+        size_t _checkDelim1(const(ubyte)[] data, size_t start)
+        {
+            auto ptr = data.ptr + start;
+            auto end = data.ptr + data.length;
+            for(;ptr < end; ++ptr)
+            {
+                if(*ptr == lastbyte)
+                    break;
+            }
+            return ptr == end ? ~0 : ptr - data.ptr + 1;
+        }
+
+        size_t _checkDelimN(const(ubyte)[] data, size_t start)
+        {
+            // TODO; can try optimizing this
+            auto ptr = data.ptr + start + lineterm.length - 1;
+            auto end = data.ptr + data.length;
+            auto ltend = lineterm.ptr + lineterm.length - 1;
+            for(;ptr < end; ++ptr)
+            {
+                if(*ptr == lastbyte)
+                {
+                    // triggers a check
+                    auto ptr2 = ptr - lineterm.length + 1;
+                    auto ltptr = lineterm.ptr;
+                    for(; ltptr < ltend; ++ltptr, ++ptr2)
+                        if(*ltptr != *ptr2)
+                            break;
+                    if(ltptr == ltend)
+                        break;
+                }
+            }
+            return ptr >= end ? ~0 : ptr - data.ptr + 1;
+        }
+
+        return lineterm.length == 1 ? readUntil(&_checkDelim1) : readUntil(&_checkDelimN);
+    }
+
+    /// ditto
+    final const(ubyte)[] readUntil(ubyte ub)
+    {
+        return readUntil((&ub)[0..1]);
     }
 
     /**
@@ -1015,6 +1006,25 @@ class DInput : BufferedInput
     {
         // no specialized code needed.
     }*/
+
+    /**
+     * The decoder is responsible for transforming data from the correct
+     * encoding when reading from a stream.  For instance, a UTF-16 file with
+     * byte order different than the native machine will likely need to be
+     * byte-swapped as it's read
+     */ 
+    @property void decoder(size_t delegate(ubyte[] data) dg)
+    {
+        _decode = dg;
+    }
+
+    /**
+     * Get the decoder function.
+     */
+    size_t delegate(ubyte[] data) encoder() @property
+    {
+        return _decode;
+    }
 
     @property ByChunk byChunk(size_t chunkSize = 0)
     {
@@ -1510,21 +1520,14 @@ class CStream : BufferedInput, BufferedOutput
         return result;
     }
 
-    const(ubyte)[] readln(const(ubyte)[] lineterm)
+    const(char)[] readln(dchar lineterm)
     {
-        // TODO: make sure this is correct for line termination...
-        assert(lineterm.length <= 4);
-        int ltarg = 0;
-        foreach(ub; lineterm)
-            ltarg = (ltarg << 8) | cast(uint)ub;
-            
-        auto result = .getdelim(&_buf, &_bufsize, ltarg, source);
+        auto result = .getdelim(&_buf, &_bufsize, lineterm, source);
         if(result < 0)
             // Throw instead?
             return null;
-        return (cast(ubyte *)_buf)[0..result];
+        return _buf[0..result];
     }
-
 
     /**
      * Get the underlying FILE*.  Use this for optimizing when possible.
@@ -1663,11 +1666,17 @@ struct TextInput
 {
     private struct Impl
     {
-        private BufferedInput input;
-        private StreamWidth width;
-        private ByteOrder bo;
+        CStream input_c;
+        DInput input_d;
+        StreamWidth width;
+        ByteOrder bo;
 
-        void decode(ubyte[] data)
+        @property BufferedInput input()
+        {
+            return input_d ? cast(BufferedInput)input_d : input_c;
+        }
+
+        size_t decode(ubyte[] data)
         {
             switch(width)
             {
@@ -1704,7 +1713,7 @@ struct TextInput
                     else if(data[0] == 0 && data[1] == 0 && data[2] == 0xFE && data[3] == 0xFF)
                     {
                         bo = ByteOrder.Big;
-                        width = STreamWidth.UTF32;
+                        width = StreamWidth.UTF32;
                         goto case StreamWidth.UTF32;
                     }
                 }
@@ -1750,14 +1759,16 @@ struct TextInput
                 assert(0, "invalid stream width");
             }
         }
+
     }
 
     private Impl* _impl;
 
+
     /**
      * Fetch the buffered input stream that backs this text outputter
      */
-    @property BufferedOutput input()
+    @property BufferedInput input()
     in
     {
         assert(_impl);
@@ -1767,9 +1778,28 @@ struct TextInput
         return _impl.input;
     }
 
-    void bind(InputStream ins)
+    void bind(InputStream ins, StreamWidth width = StreamWidth.AUTO, ByteOrder bo = ByteOrder.Native)
     {
-        bind(new DInput(ins));
+        bind(new DInput(ins), width, bo);
+    }
+
+    void bind(DInput ins, StreamWidth width = StreamWidth.AUTO, ByteOrder bo = ByteOrder.Native)
+    in
+    {
+        assert(width == StreamWidth.AUTO || width == StreamWidth.UTF8 ||
+               width == StreamWidth.UTF16 || width == StreamWidth.UTF32);
+        assert(bo == ByteOrder.Native || bo == ByteOrder.Little ||
+               bo == ByteOrder.Big);
+    }
+    body
+    {
+        if(!_impl)
+            _impl = new Impl;
+
+        ins.decoder = &_impl.decode;
+        _impl.bo = bo;
+        _impl.input_d = ins;
+        _impl.width = width;
     }
 
     void bind(FILE *fp)
@@ -1777,9 +1807,93 @@ struct TextInput
         bind(new CStream(fp));
     }
 
-    void bind(BufferedInput input)
+    void bind(CStream cstr)
     {
-        this.input = input;
+        if(!_impl)
+            _impl = new Impl;
+        _impl.input_c = cstr;
+        _impl.width = StreamWidth.UTF8;
+    }
+
+    private static size_t checkLineT(T)(const(ubyte)[] ubdata, size_t start, dchar terminator)
+    {
+        auto data = cast(const(T)[])ubdata;
+        start /= T.sizeof;
+        bool done = false;
+        foreach(size_t idx, dchar d; data[start..$])
+        {
+            if(done)
+                return idx;
+            if(d == terminator)
+                // need to go one more index.
+                done = true;
+        }
+        return done ? data.length * T.sizeof: ~0;
+    }
+
+    private immutable(T)[] transcode(T, U)(const(ubyte)[] data)
+    {
+        return to!(immutable(T)[])(cast(const(U)[])data);
+    }
+
+    const(T)[] readln(T = char)(dchar terminator = '\n') if(is(T == char) || is(T == wchar) || is(T == dchar))
+    {
+        if(_impl.input_d)
+        {
+            // use the d_input function to read until a line terminator is
+            // found.
+            size_t checkLine(const(ubyte)[] data, size_t start)
+            {
+                // the "character" we are looking for is determined by the
+                // width.
+                switch(_impl.width)
+                {
+                case StreamWidth.UTF8:
+                    return checkLineT!char(data, start, terminator);
+                case StreamWidth.UTF16:
+                    return checkLineT!wchar(data, start, terminator);
+                case StreamWidth.UTF32:
+                    return checkLineT!dchar(data, start, terminator);
+                default:
+                    assert(0, "invalid character width");
+                }
+            }
+            const(ubyte)[] result = din.readUntil(&checkLine);
+            if(_impl.width == T.sizeof)
+            {
+                return cast(const(T)[])result;
+            }
+            else
+            {
+                switch(_impl.width)
+                {
+                case StreamWidth.UTF8:
+                    return transcode!(T, char)(result);
+                case StreamWidth.UTF16:
+                    return transcode!(T, wchar)(result);
+                case StreamWidth.UTF32:
+                    return transcode!(T, dchar)(result);
+                default:
+                    assert(0, "invalid character width");
+                }
+            }
+        }
+        else
+        {
+            // C input, must be UTF8
+            assert(_impl.input_c);
+            auto line = _impl.input_c.readln(terminator);
+            if(line.length)
+            {
+                static if(is(T == char))
+                    return line;
+                else
+                    return to!(immutable(T)[])(line);
+            }
+            else
+                // no data, no need to do any allocation, etc.
+                return (T[]).init;
+        }
     }
 }
 
@@ -2152,17 +2266,6 @@ struct TextOutput
             _impl.output.close();
             _impl.output = null;
         }
-    }
-
-    void setWidth(StreamWidth width)
-    in
-    {
-        assert(width == StreamWidth.UTF8 || width == StreamWidth.UTF16 || width == StreamWidth.UTF32);
-        assert(_impl);
-    }
-    body
-    {
-        _impl.charwidth = width;
     }
 
     /**

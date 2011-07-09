@@ -29219,11 +29219,11 @@ assert(tz.dstName == "PDT");
                     inUTC = readVal!bool(tzFile);
             }
 
-            _enforceValidTZFile(tzFile.readln().strip().empty());
+            _enforceValidTZFile(tzFile.readUntil('\n').strip().empty());
 
-            auto posixEnvStr = tzFile.readln().strip();
+            auto posixEnvStr = tzFile.readUntil('\n').strip();
 
-            _enforceValidTZFile(tzFile.readln().strip().empty());
+            _enforceValidTZFile(tzFile.readUntil('\n').strip().empty());
             //_enforceValidTZFile(tzFile.eof());
 
 
