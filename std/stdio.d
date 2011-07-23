@@ -341,6 +341,10 @@ interface BufferedOutput : Seek
 
 class File : InputStream, OutputStream
 {
+    static size_t totalbytes = 0;
+    static size_t nwrites = 0;
+    static size_t[size_t] writedist;
+
     // the file descriptor
     // NOTE: we do not close this on destruction because this low level class
     // does not know where fd came from.  A derived class may choose to close
@@ -459,6 +463,9 @@ class File : InputStream, OutputStream
         {
             throw new Exception("write failed, check errno");
         }
+        nwrites++;
+        totalbytes += result;
+        ++writedist[result];
         return cast(size_t)result;
     }
 
@@ -727,6 +734,7 @@ class DInput : BufferedInput
      */
     final const(ubyte)[] readUntil(scope size_t delegate(const(ubyte)[] data, size_t start) process)
     {
+        debug(stdio) printf("readUntil, readpos=%d, decoded=%d, valid=%d, buffer.length=%d\n", readpos, decoded, valid, buffer.length);
         // read data from the buffer/stream until the condition is met,
         // expanding the buffer as necessary
         auto d = buffer[readpos..decoded];
@@ -774,13 +782,14 @@ class DInput : BufferedInput
                 decoded += nread;
             }
         }
+        debug(stdio) printf("readUntil (after while), readpos=%d, decoded=%d, valid=%d\n", readpos, decoded, valid);
 
         // adjust the read buffer, and return the data.
 
         auto ep = readpos + status;
         d = buffer[readpos..readpos + status];
         if(ep == valid)
-            valid = readpos = 0;
+            valid = readpos = decoded = 0;
         else
             readpos = ep;
         return d;
@@ -1037,6 +1046,7 @@ class DInput : BufferedInput
 
 class DOutput : BufferedOutput
 {
+
     protected
     {
         // the source stream
@@ -1055,7 +1065,7 @@ class DOutput : BufferedOutput
         // function to encode data for writing.  This is called prior to
         // writing the data to the underlying stream.  When this is set, extra
         // copies of the data may be made.
-        void delegate(ubyte[] data) _encode;
+        size_t delegate(ubyte[] data) _encode;
 
         // if this is set, _flushCheck should not be called when checking for
         // automatic flushing.
@@ -1140,22 +1150,14 @@ class DOutput : BufferedOutput
         assert(fcheck <= cast(ptrdiff_t)data.length);
         // minwrite is the number of bytes that must be written to the
         // stream.
-        size_t minwrite = (fcheck == -1) ? 0 : fcheck + writepos;
-        if(data.length + writepos - minwrite > buffer.length)
+        ptrdiff_t minwrite = (fcheck < 0) ? 0 : fcheck + writepos;
+        if(writepos + data.length - minwrite >= buffer.length)
         {
-            // minwrite is too small, the leftover data wouldn't fit
-            // into the buffer
-            minwrite = data.length + writepos - buffer.length;
-            // want to at least write a full buffer
-            if(minwrite < buffer.length)
-                minwrite = buffer.length;
-            fcheck = -1;
+            // minwrite is not needed, we are going to have to flush more than
+            // minwrite bytes anyways.
+            minwrite = 0;
         }
-        // maxwrite is the number of bytes to try writing.  If fcheck
-        // did not return -1 then we need to respect its wishes, otherwise,
-        // we should write as much as possible in one go.
-        size_t maxwrite = (fcheck == -1) ? data.length + writepos : fcheck;
-        if(minwrite > 0)
+        if(minwrite > 0 || writepos + data.length > buffer.length)
         {
             // need to write some data to the actual stream. But we want to
             // minimize the calls to output.put.
@@ -1165,79 +1167,140 @@ class DOutput : BufferedOutput
                 // its written, so just do that in a loop.  This handles all
                 // possible values of minwrite and whether there is data in the
                 // buffer already.
-                if(writepos)
+                while(data.length + writepos > buffer.length)
                 {
                     // already data in the buffer, this is a special case, we
                     // can optimize the rest in the loop.
-                    auto ntoCopy = minwrite - writepos;
-                    if(ntoCopy + writepos > buffer.length)
-                        ntoCopy = buffer.length - writepos;
+                    auto ntoCopy = buffer.length - writepos;
                     auto totalbytes = writepos + ntoCopy;
                     buffer[writepos..totalbytes] = data[0..ntoCopy];
                     data = data[ntoCopy..$];
-                    _encode(buffer[0..totalbytes]);
-                    ensureWrite(buffer[0..totalbytes], totalbytes);
-                    writepos = _startofwrite = 0;
-                    minwrite -= totalbytes;
-                }
-                while(minwrite > 0)
-                {
-                    assert(writepos == 0); // sanity check.
-                    auto ntoCopy = minwrite > buffer.length ? buffer.length : minwrite;
-                    auto dest = buffer[0..ntoCopy];
-                    dest[] = data[0..ntoCopy];
-                    data = data[ntoCopy..$];
-                    _encode(dest);
-                    ensureWrite(dest, dest.length);
-                    minwrite -= ntoCopy;
+                    auto nencoded = _encode(buffer[0..totalbytes]);
+                    //printf("nencoded = %u, totalbytes=%u\n", nencoded, totalbytes);
+                    ensureWrite(buffer[0..nencoded], nencoded);
+                    if(totalbytes != nencoded)
+                    {
+                        // need to move the non-encoded bytes to the front of
+                        // the buffer
+                        writepos = totalbytes - nencoded;
+                        _startofwrite = nencoded > _startofwrite ? 0 :
+                            _startofwrite - nencoded;
+                        memmove(buffer.ptr, buffer.ptr + nencoded, writepos);
+                    }
+                    else
+                    {
+                        writepos = _startofwrite = 0;
+                    }
+                    minwrite -= nencoded;
                 }
 
-                // copy whatever is left over.
-                if(data.length)
+                if(minwrite > 0)
                 {
-                    buffer[0..data.length] = data[];
-                    writepos = data.length;
+                    // still have some data left to write
+                    auto ntoCopy = minwrite - writepos;
+                    buffer[writepos..minwrite] = data[0..ntoCopy];
+                    auto ndecoded = _encode(buffer[0..minwrite]);
+                    assert(ndecoded == minwrite); // nowhere to go if this isn't true.
+                    ensureWrite(buffer[0..minwrite], minwrite);
+                    buffer[0..data.length - ntoCopy] = data[ntoCopy..$];
+                    writepos = data.length - ntoCopy;
+                    // TODO: not sure about this...
+                    _startofwrite = 0;
                 }
-            }
-            else if(writepos && minwrite <= buffer.length)
-            {
-                // valid data in the buffer.  Easiest thing to do is to
-                // write the minimum data to the buffer, ensure it gets
-                // written, then populate the buffer with the leftovers.
-                auto nCopy = minwrite - writepos;
-                buffer[writepos..minwrite] = data[0..nCopy];
-                data = data[nCopy..$];
-
-                ensureWrite(buffer[0..minwrite], minwrite);
-                // copy leftovers to the buffer
-                writepos = data.length;
-                // reset _startofwrite in case we are tracking a single write.
-                _startofwrite = 0;
-                buffer[0..writepos] = data[];
+                else
+                {
+                    // copy whatever is left over.
+                    if(data.length)
+                    {
+                        buffer[writepos..writepos + data.length] = data[];
+                        writepos += data.length;
+                    }
+                }
+                //printf("here, writepos=%d\n", writepos);
             }
             else
             {
-                // either the buffer contains no data, or the minimum written
-                // data needs to be written in more than one write statement.
-                // first, write any data from the buffer
-                if(writepos)
+                // keep looping until there is no data left
+                while(data.length > 0)
                 {
-                    // write out the data in the buffer
-                    ensureWrite(buffer[0..writepos], writepos);
-                    minwrite -= writepos;
-                    maxwrite -= writepos;
-                    writepos = 0;
-                    // reset _startofwrite in case we are tracking a single
-                    // write.
-                }
-                // now, write data directly from the passed in slice.
-                auto nwritten = ensureWrite(data[0..maxwrite], minwrite);
-                _startofwrite = 0;
-                if(nwritten != data.length)
-                {
-                    // copy the leftovers to the buffer
-                    writepos = data.length - nwritten;
-                    buffer[0..writepos] = data[nwritten..$];
+                    if(writepos) // still data in the buffer
+                    {
+                        if(writepos + data.length < buffer.length)
+                        {
+                            // determine whether to write based on minwrite
+                            if(minwrite > 0)
+                            {
+                                auto ntoCopy = minwrite - writepos;
+                                buffer[writepos..minwrite] = data[0..ntoCopy];
+                                ensureWrite(buffer[0..minwrite], minwrite);
+                                // no more data in the buffer
+                                writepos = 0;
+                                data = data[ntoCopy..$];
+                                minwrite = 0;
+                            }
+                            else
+                            {
+                                // no requirement to flush, just output the
+                                // rest of the data to the buffer.
+                                buffer[writepos..writepos+data.length] = data[];
+                                writepos += data.length;
+                                data = null;
+                            }
+                        }
+                        else
+                        {
+                            // going to need at least one write.
+                            if(minwrite > 0 && minwrite <= buffer.length)
+                            {
+                                // copy enough to satisfy minwrite, then we
+                                // reduce to the simple case.
+                                buffer[writepos..minwrite] = data[0..minwrite - writepos];
+                                ensureWrite(buffer[0..minwrite], minwrite);
+                                // update state
+                                data = data[minwrite - writepos..$];
+                                minwrite = 0;
+                                writepos = 0;
+                            }
+                            else
+                            {
+                                // need to write at least a buffer's worth of
+                                // data.  Buffer as much as possible, and write
+                                // it.  Subsequent writes may write directly
+                                // from data.
+                                auto ntoCopy = buffer.length - writepos;
+                                buffer[writepos..$] = data[0..ntoCopy];
+                                ensureWrite(buffer, buffer.length);
+
+                                // update state
+                                data = data[ntoCopy..$];
+                                minwrite -= buffer.length;
+                                writepos = 0;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // no data in the buffer.  See how much data should be
+                        // written directly.
+                        if(minwrite > 0)
+                        {
+                            auto nwritten = output.put(data[0..minwrite]);
+                            minwrite -= nwritten;
+                            data = data[nwritten..$];
+                        }
+                        else if(data.length >= buffer.length)
+                        {
+                            auto nwritten = output.put(data);
+                            data = data[nwritten..$];
+                        }
+                        else
+                        {
+                            // data will fit in the buffer, do it.
+                            buffer[0..data.length] = data[];
+                            writepos = data.length;
+                            data = null;
+                        }
+                    }
                 }
             }
         }
@@ -1311,9 +1374,28 @@ class DOutput : BufferedOutput
         if(writepos)
         {
             if(_encode)
-                _encode(buffer[0..writepos]);
-            ensureWrite(buffer[0..writepos], writepos);
-            writepos = 0;
+            {
+                auto nencoded = _encode(buffer[0..writepos]);
+                ensureWrite(buffer[0..nencoded], writepos);
+                if(writepos != nencoded)
+                {
+                    // need to move the non-encoded bytes to the front of
+                    // the buffer
+                    writepos -= nencoded;
+                    _startofwrite = nencoded > _startofwrite ? 0 :
+                        _startofwrite - nencoded;
+                    memmove(buffer.ptr, buffer.ptr + nencoded, writepos);
+                }
+                else
+                {
+                    writepos = _startofwrite = 0;
+                }
+            }
+            else
+            {
+                ensureWrite(buffer[0..writepos], writepos);
+                writepos = _startofwrite = 0;
+            }
         }
     }
 
@@ -1355,7 +1437,7 @@ class DOutput : BufferedOutput
      * If this is set to non-null, extra copying may occur as a writable buffer
      * is needed to encode the stream.
      */ 
-    @property void encoder(void delegate(ubyte[] data) dg)
+    @property void encoder(size_t delegate(ubyte[] data) dg)
     {
         _encode = dg;
     }
@@ -1363,7 +1445,7 @@ class DOutput : BufferedOutput
     /**
      * Get the encoder function.
      */
-    void delegate(ubyte[] data) encoder() @property
+    size_t delegate(ubyte[] data) encoder() @property
     {
         return _encode;
     }
@@ -1625,12 +1707,22 @@ body
     switch(charwidth)
     {
     case wchar.sizeof:
-        // swap every 2 bytes
-        // do majority using uint
-        // TODO:  see if this can be optimized further, or if there are
-        // better options for 64-bit.
         {
+            //printf("casting ushort, %x, %x\n", data.ptr, data.length);
             ushort[] sdata = cast(ushort[])data;
+            if((cast(size_t)sdata.ptr & 0x03) != 0)
+            {
+                // first two bytes are not aligned, do those specially
+                *sdata.ptr = ((*sdata.ptr << 8) & 0xff00) |
+                    ((*sdata.ptr >> 8) & 0x00ff);
+                sdata = sdata[1..$];
+            }
+            // swap every 2 bytes
+            // do majority using uint
+            // TODO:  see if this can be optimized further, or if there are
+            // better options for 64-bit.
+            //printf("casting uint\n");
+
             uint[] idata = cast(uint[])sdata[0..$ - ($ % 2)];
             if(sdata.length % 2 != 0)
             {
@@ -1646,6 +1738,7 @@ body
         break;
     case dchar.sizeof:
         // swap every 4 bytes
+            //printf("casting uint (utf32)\n");
         foreach(ref t; cast(uint[])data)
         {
             /*t = ((t << 24) & 0xff000000) |
@@ -1858,7 +1951,7 @@ struct TextInput
                     assert(0, "invalid character width");
                 }
             }
-            const(ubyte)[] result = din.readUntil(&checkLine);
+            const(ubyte)[] result = _impl.input_d.readUntil(&checkLine);
             if(_impl.width == T.sizeof)
             {
                 return cast(const(T)[])result;
@@ -1922,9 +2015,13 @@ struct TextOutput
         // width to wchar for stdou.
         ubyte charwidth;
 
-        void encode(ubyte[] data)
+        size_t encode(ubyte[] data)
         {
+            // normalize, we can't encode anything that's a partial character.
+            data = data[0..data.length - (data.length % charwidth)];
             __swapBytes(data, charwidth);
+            //printf("made it!\n");
+            return data.length;
         }
 
         ptrdiff_t flushLineCheckT(T)(const(T)[] data)
@@ -2203,9 +2300,26 @@ struct TextOutput
             else
             {
                 // convert to dchars, put each one out there.
-                foreach(dchar dc; writeme)
+                static if(C.sizeof != 1)
+                    foreach(dchar dc; writeme)
+                    {
+                        put(dc);
+                    }
+                else
                 {
-                    put(dc);
+                    auto cur = writeme.ptr;
+                    auto end = writeme.ptr + writeme.length;
+                    while(cur < end)
+                    {
+                        static if(C.sizeof == 1)
+                        {
+                            if(*cur <= 0x7f)
+                            {
+                                put(cast(dchar)*cur++);
+                                continue;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2223,7 +2337,13 @@ struct TextOutput
                 {
                     // convert the character to utf8
                     char[4] buf = void;
-                    output.put(cast(ubyte[])std.utf.toUTF8(buf, c));
+                    if(c < 0x7f)
+                    {
+                        buf[0] = cast(char)c;
+                        output.put(cast(ubyte[])buf[0..1]);
+                    }
+                    else
+                        output.put(cast(ubyte[])std.utf.toUTF8(buf, c));
                 }
                 else static if(is(CT == wchar))
                 {
