@@ -22,6 +22,10 @@ import std.range;
 import std.utf;
 import std.conv;
 import std.typecons;
+import std.exception;
+
+// This uses inline utf decoding/encoding instead of calling runtime functions.
+version = inlineutf;
 
 version (DigitalMars) version (Windows)
 {
@@ -308,6 +312,8 @@ interface BufferedOutput : Seek
     void put(const(ubyte)[] data);
     /// ditto
     alias put write;
+    /// ditto
+    void putByte(ubyte data);
 
     /+ commented out for now, need to investigate shared more
     /**
@@ -341,10 +347,6 @@ interface BufferedOutput : Seek
 
 class File : InputStream, OutputStream
 {
-    static size_t totalbytes = 0;
-    static size_t nwrites = 0;
-    static size_t[size_t] writedist;
-
     // the file descriptor
     // NOTE: we do not close this on destruction because this low level class
     // does not know where fd came from.  A derived class may choose to close
@@ -463,9 +465,6 @@ class File : InputStream, OutputStream
         {
             throw new Exception("write failed, check errno");
         }
-        nwrites++;
-        totalbytes += result;
-        ++writedist[result];
         return cast(size_t)result;
     }
 
@@ -722,6 +721,14 @@ class DInput : BufferedInput
      * data just read.  The deleate should return ~0 if the condition is not
      * satisfied, or the number of bytes that should be returned otherwise.
      *
+     * When no more bytes can be read, the function will be called with start
+     * == data.length.  The function has the option of returning ~0, which
+     * means, return the data read so far.  Or it can return a valid status,
+     * which means only that data will be read.
+     *
+     * If the function returns 0, then 0 bytes will be returned, and no data
+     * will be consumed.
+     *
      * Any data that satisfies the condition will be considered consumed from
      * the stream.
      *
@@ -766,8 +773,10 @@ class DInput : BufferedInput
             if(!nread)
             {
                 // no more data available from the stream, process the EOF
-                process(buffer[0..decoded], decoded);
-                status = decoded;
+                if(decoded > 0)
+                    status = process(buffer[0..decoded], decoded);
+                if(status == ~0)
+                    status = decoded;
             }
             else
             {
@@ -793,6 +802,19 @@ class DInput : BufferedInput
         else
             readpos = ep;
         return d;
+    }
+
+    /**
+     * Skips up to nbytes of input in the buffer.  If there are less than
+     * nbytes in the buffer, the buffer is simply emptied.
+     */
+    final size_t skip(size_t nbytes)
+    {
+        auto remaining = decoded - readpos;
+        if(nbytes > remaining)
+            nbytes = remaining;
+        readpos += nbytes;
+        return nbytes;
     }
 
     /**
@@ -920,8 +942,9 @@ class DInput : BufferedInput
             if(!nread)
             {
                 // no more data available from the stream, process the EOF
-                process(arr[0..adecoded], adecoded);
-                status = avalid;
+                status = process(arr[0..adecoded], adecoded);
+                if(status == ~0)
+                    status = adecoded;
             }
             else
             {
@@ -1151,14 +1174,14 @@ class DOutput : BufferedOutput
         // minwrite is the number of bytes that must be written to the
         // stream.
         ptrdiff_t minwrite = (fcheck < 0) ? 0 : fcheck + writepos;
-        if(writepos + data.length - minwrite >= buffer.length)
+        if(minwrite > 0 || writepos + data.length >= buffer.length)
         {
-            // minwrite is not needed, we are going to have to flush more than
-            // minwrite bytes anyways.
-            minwrite = 0;
-        }
-        if(minwrite > 0 || writepos + data.length > buffer.length)
-        {
+            if(writepos + data.length - minwrite >= buffer.length)
+            {
+                // minwrite is not needed, we are going to have to flush more
+                // than minwrite bytes anyways.
+                minwrite = 0;
+            }
             // need to write some data to the actual stream. But we want to
             // minimize the calls to output.put.
             if(_encode)
@@ -1167,7 +1190,7 @@ class DOutput : BufferedOutput
                 // its written, so just do that in a loop.  This handles all
                 // possible values of minwrite and whether there is data in the
                 // buffer already.
-                while(data.length + writepos > buffer.length)
+                while(data.length + writepos >= buffer.length)
                 {
                     // already data in the buffer, this is a special case, we
                     // can optimize the rest in the loop.
@@ -1308,8 +1331,29 @@ class DOutput : BufferedOutput
         {
             // no data needs to be written to the stream, just buffer
             // everything.
-            buffer[writepos..writepos + data.length] = data[];
-            writepos += data.length;
+            if(data.length <= 4)
+            {
+                auto p = data.ptr;
+                auto e = data.ptr + data.length;
+                while(p != e)
+                    buffer[writepos++] = *p++;
+            }
+            else
+            {
+                buffer[writepos..writepos + data.length] = data[];
+                writepos += data.length;
+            }
+        }
+    }
+
+    final void putByte(ubyte b)
+    {
+        // never useful to write one byte to the stream.  Just try writing to
+        // the buffer, and if it's full, flush it.
+        buffer[writepos++] = b;
+        if(writepos == buffer.length || (_flushCheck && _flushCheck((&b)[0..1]) > -1))
+        {
+            flush();
         }
     }
 
@@ -1487,7 +1531,7 @@ struct ByChunk
     this(DInput dbi, size_t size)
     in
     {
-        assert(size, "size cannot be greater than zero");
+        assert(size, "size must be greater than zero");
     }
     body
     {
@@ -1640,6 +1684,11 @@ class CStream : BufferedInput, BufferedOutput
             stderr.writeln("Error writing data: ", result, " ", data.length);
             throw new Exception("Error writing data");
         }
+    }
+
+    void putByte(ubyte data)
+    {
+        fputc(data, source);
     }
 
     void flush()
@@ -1853,6 +1902,10 @@ struct TextInput
             }
         }
 
+        size_t determineWidth(const(ubyte)[] data, size_t start)
+        {
+            return width == StreamWidth.AUTO ? ~0 : 0;
+        }
     }
 
     private Impl* _impl;
@@ -1892,6 +1945,7 @@ struct TextInput
         ins.decoder = &_impl.decode;
         _impl.bo = bo;
         _impl.input_d = ins;
+        _impl.input_c = null;
         _impl.width = width;
     }
 
@@ -1905,6 +1959,7 @@ struct TextInput
         if(!_impl)
             _impl = new Impl;
         _impl.input_c = cstr;
+        _impl.input_d = null;
         _impl.width = StreamWidth.UTF8;
     }
 
@@ -1933,7 +1988,7 @@ struct TextInput
     {
         if(_impl.input_d)
         {
-            // use the d_input function to read until a line terminator is
+            // use the input_d function to read until a line terminator is
             // found.
             size_t checkLine(const(ubyte)[] data, size_t start)
             {
@@ -1987,6 +2042,239 @@ struct TextInput
                 // no data, no need to do any allocation, etc.
                 return (T[]).init;
         }
+    }
+
+    private struct InputRangeC
+    {
+        // TODO: locking
+        dchar _crt;
+        FILE *_f;
+        this(CStream cs)
+        {
+            _f = cs.cFile;
+        }
+
+        @property bool empty()
+        {
+            if (_crt == _crt.init)
+            {
+                _crt = fgetc(_f);
+                if (_crt == -1)
+                {
+                    return true;
+                }
+                else
+                {
+                    enforce(ungetc(_crt, _f) == _crt);
+                }
+            }
+            return false;
+        }
+
+        dchar front()
+        {
+            enforce(!empty);
+            return _crt;
+        }
+
+        void popFront()
+        {
+            enforce(!empty);
+            if (fgetc(_f) == -1)
+            {
+                enforce(feof(_f));
+            }
+            _crt = _crt.init;
+        }
+    }
+
+    private struct InputRangeD(CT)
+    {
+        private
+        {
+            DInput input;
+            size_t curlen;
+            dchar cur;
+        }
+
+        this(DInput di)
+        {
+            this.input = di;
+            popFront();
+        }
+
+        public @property bool empty()
+        {
+            return !curlen;
+        }
+
+        public @property dchar front()
+        {
+            return cur;
+        }
+
+        public void popFront()
+        {
+            input.skip(curlen);
+            curlen = 0;
+            input.readUntil(&parseDChar);
+        }
+
+        private size_t parseDChar(const(ubyte)[] data, size_t start)
+        {
+            // try to treat the start of data like it's a CT[] sequence, see if
+            // there is a valid code point.
+            static if(is(CT == char))
+            {
+                if(data[0] & 0x80)
+                {
+                    auto len = 7 - bsr((~data[0]) & 0xff);
+                    if(len < 2 || len > 4)
+                        throw new Exception("Invalid utf sequence");
+                    if(len > data.length)
+                    {
+                        if(start == data.length)
+                            // EOF, couldn't get a valid character.
+                            return 0;
+                        return ~0;
+                    }
+                    else
+                    {
+                        // got the data, now, parse it
+                        // enforce that the remaining bytes all start with 10b
+                        foreach(i; 1..len)
+                            if((data[i] & 0xc0) != 0x80)
+                                throw new Exception("invalid utf sequence");
+                        curlen = len;
+                        switch(len)
+                        {
+                        case 2:
+                            cur = ((data[0] & 0x1f) << 5) | 
+                                (data[1] & 0x3f);
+                            return 0;
+                        case 3:
+                            cur = ((data[0] & 0x0f) << 11) | 
+                                ((data[1] & 0x3f) << 6) |
+                                (data[2] & 0x3f);
+                            return 0;
+                        case 4:
+                            cur = ((data[0] & 0x07) << 17) | 
+                                ((data[1] & 0x3f) << 12) |
+                                ((data[2] & 0x3f) << 6) |
+                                (data[3] & 0x3f);
+                            return 0;
+                        default:
+                            assert(0); // should never happen
+                        }
+                    }
+                }
+                else
+                {
+                    cur = data[0];
+                    curlen = 1;
+                    return 0;
+                }
+            }
+            else static if(is(CT == wchar))
+            {
+                if(data.length < wchar.sizeof)
+                {
+                    if(data.length == start)
+                        return 0;
+                    else
+                        return ~0;
+                }
+                auto wp = cast(const(wchar)*)data.ptr;
+                cur = *wp;
+                if(cur < 0xD800 || cur >= 0xE000)
+                {
+                    curlen = wchar.sizeof;
+                    return 0;
+                }
+                else if(cur >= 0xDCFF)
+                {
+                    // second half of surrogate pair, invalid.
+                    throw new Exception("invalid UTF sequence");
+                }
+                else if(data.length < wchar.sizeof * 2)
+                {
+                    // surrogate pair, but not enough space for the second
+                    // wchar
+                    if(start == data.length)
+                        return 0;
+                    else
+                        return ~0;
+                }
+                else if(wp[1] < 0xDC00 || wp[1] >= 0xE000)
+                {
+                    throw new Exception("invalid UTF sequence");
+                }
+                else
+                {
+                    // combine the pairs
+                    cur = (((cur & 0x3FF) << 10) | (wp[1] & 0x3FF)) + 0x10000;
+                    curlen = wchar.sizeof * 2;
+                    return 0;
+                }
+            }
+            else // dchar
+            {
+                if(data.length < 4)
+                {
+                    if(data.length == start)
+                        // do not consume a partial-character
+                        return 0;
+                    else
+                        return ~0;
+                }
+                // got at least one dchar
+                cur = *cast(const(dchar)*)data.ptr;
+                curlen = 4;
+                return 0;
+            }
+        }
+    }
+
+    public uint readf(Data...)(in char[] format, Data data)
+    {
+        if(_impl.input_d)
+        {
+            if(_impl.width == StreamWidth.AUTO)
+            {
+                _impl.input_d.readUntil(&_impl.determineWidth);
+                if(_impl.width == StreamWidth.AUTO)
+                    // could not read anything
+                    return 0;
+            }
+            switch(_impl.width)
+            {
+            case StreamWidth.UTF8:
+                {
+                    auto ir = InputRangeD!char(_impl.input_d);
+                    return formattedRead(ir, format, data);
+                }
+            case StreamWidth.UTF16:
+                {
+                    auto ir = InputRangeD!wchar(_impl.input_d);
+                    return formattedRead(ir, format, data);
+                }
+            case StreamWidth.UTF32:
+                {
+                    auto ir = InputRangeD!dchar(_impl.input_d);
+                    return formattedRead(ir, format, data);
+                }
+            default:
+                assert(0); // should not get here
+            }
+        }
+        else if(_impl.input_c)
+        {
+            writeln("using C input range");
+            auto ir = InputRangeC(_impl.input_c);
+            return formattedRead(ir, format, data);
+        }
+        else
+            assert(0);
     }
 }
 
@@ -2295,30 +2583,95 @@ struct TextOutput
             {
                 // width is the same size as the stream itself, just paste the text
                 // into the stream.
-                output.put(cast(const(ubyte)[]) writeme);
+                output.put((cast(const(ubyte)*) writeme.ptr)[0..writeme.length * CT.sizeof]);
             }
             else
             {
-                // convert to dchars, put each one out there.
-                static if(C.sizeof != 1)
+                version(inlineutf)
+                {
+                    static if(is(typeof(writeme[0]) : const(char)))
+                    {
+                        // this is a char[] array.
+                        dchar val = void;
+                        auto ptr = writeme.ptr;
+                        auto eptr = writeme.ptr + writeme.length;
+                        uint multi = 0;
+                        while(ptr != eptr)
+                        {
+                            char data = *ptr++;
+                            if(data & 0x80)
+                            {
+                                if(!multi)
+                                {
+                                    // determine highest 0 bit
+                                    multi = 6 - bsr((~data) & 0xff);
+                                    if(multi == 0)
+                                        throw new Exception("invalid utf sequence");
+                                    val = data & ~(0xffff_ffc0 >> multi);
+                                }
+                                else if(data & 0x40)
+                                    throw new Exception("invalid utf sequence");
+                                else
+                                {
+                                    val = (val << 6) | (data & 0x3f);
+                                    if(!--multi)
+                                    {
+                                        // process this dchar
+                                        put(val);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                if(multi)
+                                    throw new Exception("invalid utf sequence");
+                                put(cast(CT)data);
+                            }
+                        }
+                        if(multi)
+                            throw new Exception("invalid utf sequence");
+                    }
+                    else static if(is(typeof(writeme[0]) : const(wchar)))
+                    {
+                        auto ptr = writeme.ptr;
+                        auto end = writeme.ptr + writeme.length;
+                        while(ptr != end)
+                        {
+                            wchar data = *ptr++;
+                            if((data & 0xF800) == 0xD800)
+                            {
+                                // part of a surrogate pair
+                                if(data > 0xDBFF || ptr == end)
+                                    throw new Exception("invalid utf sequence");
+                                dchar val = (data & 0x3ff) << 10;
+                                data = *ptr++;
+                                if(data > 0xDFFF || data < 0xDC00)
+                                    throw new Exception("invalid utf sequence");
+                                val = (val | (data & 0x3ff)) + 0x10000;
+                                put(val);
+                            }
+                            else
+                            {
+                                // not specially encoded
+                                put(cast(dchar)data);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // just dchars, put each one.
+                        foreach(dc; writeme)
+                        {
+                            put(dc);
+                        }
+                    }
+                }
+                else
+                {
+                    // convert to dchars, put each one out there.
                     foreach(dchar dc; writeme)
                     {
                         put(dc);
-                    }
-                else
-                {
-                    auto cur = writeme.ptr;
-                    auto end = writeme.ptr + writeme.length;
-                    while(cur < end)
-                    {
-                        static if(C.sizeof == 1)
-                        {
-                            if(*cur <= 0x7f)
-                            {
-                                put(cast(dchar)*cur++);
-                                continue;
-                            }
-                        }
                     }
                 }
             }
@@ -2329,34 +2682,103 @@ struct TextOutput
             static if(A.sizeof == CT.sizeof)
             {
                 // output the data directly to the output stream
-                output.put(cast(ubyte[])((&c)[0..1]));
+                output.put((cast(const(ubyte) *)&c)[0..CT.sizeof]);
             }
             else
             {
                 static if(is(CT == char))
                 {
-                    // convert the character to utf8
-                    char[4] buf = void;
-                    if(c < 0x7f)
+                    static if(is(A : const(wchar)))
                     {
-                        buf[0] = cast(char)c;
-                        output.put(cast(ubyte[])buf[0..1]);
+                        // A is a wchar.  Make sure it's not a surrogate pair
+                        // (that it's a valid dchar)
+                        if(!isValidDchar(c))
+                            throw new Exception("invalid character output");
+                    }
+                    // convert the character to utf8
+                    if(c <= 0x7f)
+                    {
+                        //buf[0] = cast(char)c;
+                        //output.put(cast(ubyte[])buf[0..1]);
+                        output.putByte(cast(ubyte)c);
                     }
                     else
-                        output.put(cast(ubyte[])std.utf.toUTF8(buf, c));
+                    {
+                        version(inlineutf)
+                        {
+                            ubyte[4] buf = void;
+                            auto idx = 3;
+                            auto mask = 0x3f;
+                            dchar c2 = c;
+                            while(c2 > mask)
+                            {
+                                buf[idx--] = 0x80 | (c2 & 0x3f);
+                                c2 >>= 6;
+                                mask >>= 1;
+                            }
+                            buf[idx] = (c2 | (~mask << 1)) & 0xff;
+                            output.put(buf.ptr[idx..buf.length]);
+                        }
+                        else
+                        {
+                            char[4] buf = void;
+                            auto b = std.utf.toUTF8(buf, c);
+                            output.put((cast(ubyte*)b.ptr)[0..b.length]);
+                        }
+                    }
                 }
                 else static if(is(CT == wchar))
                 {
+                    static if(is(A : const(char)))
+                    {
+                        // this is a utf-8 character, only works if it's an
+                        // ascii character
+                        if(c > 0x7f)
+                            throw new Exception("invalid character output");
+                    }
                     // convert the character to utf16
                     wchar[2] buf = void;
-                    output.put(cast(ubyte[])std.utf.toUTF16(buf, c));
+                    version(inlineutf)
+                    {
+                        assert(isValidDchar(c));
+                        if(c < 0xFFFF)
+                        {
+                            buf[0] = cast(wchar)c;
+                            output.put((cast(ubyte*)buf.ptr)[0..wchar.sizeof]);
+                        }
+                        else
+                        {
+                            dchar dc = c - 0x10000;
+                            buf[0] = cast(wchar)(((dc >> 10) & 0x3FF) + 0xD800);
+                            buf[1] = cast(wchar)((dc & 0x3FF) + 0xDC00);
+                            output.put((cast(ubyte*)buf.ptr)[0..wchar.sizeof * 2]);
+                        }
+                    }
+                    else
+                    {
+                        auto b = std.utf.toUTF16(buf, c);
+                        output.put((cast(ubyte*)b.ptr)[0..b.length * wchar.sizeof]);
+                    }
                 }
                 else static if(is(CT == dchar))
                 {
+                    static if(is(A : const(char)))
+                    {
+                        // this is a utf-8 character, only works if it's an
+                        // ascii character
+                        if(c > 0x7f)
+                            throw new Exception("invalid character output");
+                    }
+                    else static if(is(A : const(wchar)))
+                    {
+                        // A is a wchar.  Make sure it's not a surrogate pair
+                        // (that it's a valid dchar)
+                        if(!isValidDchar(c))
+                            throw new Exception("invalid character output");
+                    }
                     // converting to utf32, just write directly
                     dchar dc = c;
-                    assert(isValidDchar(dc));
-                    output.put(cast(ubyte[])(&dc)[0..1]);
+                    output.put((cast(ubyte*)&dc)[0..dchar.sizeof]);
                 }
                 else
                     static assert(0, "invalid types used for output stream, " ~ CT.stringof ~ ", " ~ C.stringof);
