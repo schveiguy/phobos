@@ -29532,7 +29532,7 @@ private:
     /+
         Reads an int from a TZ file.
       +/
-    static T readVal(T)(BufferedInput tzFile)
+    static T readVal(T)(DInput tzFile)
         if(is(T == int))
     {
         T[1] buff;
@@ -29546,7 +29546,7 @@ private:
     /+
         Reads a long from a TZ file.
       +/
-    static T readVal(T)(BufferedInput tzFile)
+    static T readVal(T)(DInput tzFile)
         if(is(T == long))
     {
         T[1] buff;
@@ -29559,7 +29559,7 @@ private:
     /+
         Reads an array of values from a TZ file.
       +/
-    static T readVal(T)(BufferedInput tzFile, size_t length)
+    static T readVal(T)(DInput tzFile, size_t length)
         if(isArray!T)
     {
         auto buff = new T(length);
@@ -29574,7 +29574,7 @@ private:
     /+
         Reads a $(D TempTTInfo) from a TZ file.
       +/
-    static T readVal(T)(BufferedInput tzFile)
+    static T readVal(T)(DInput tzFile)
         if(is(T == TempTTInfo))
     {
         return TempTTInfo(readVal!int(tzFile),
@@ -29586,7 +29586,7 @@ private:
     /+
         Reads a value from a TZ file.
       +/
-    static T readVal(T)(BufferedInput tzFile)
+    static T readVal(T)(DInput tzFile)
         if(!is(T == int) &&
            !is(T == long) &&
            !is(T == char[]) &&

@@ -188,7 +188,7 @@ enum PAGE = 4096;
 /**
  * Interface defining seekable streams
  */
-interface Seek
+interface Seekable
 {
     /**
      * Seek the stream.
@@ -204,14 +204,14 @@ interface Seek
      * the end of the stream.  For End, delta should always be negative.
      *
      * returns: The position of the stream from the beginning of the stream
-     * after seeking, or ~0 if this cannot be determined.
+     * after seeking, or ulong.max if this cannot be determined.
      */
     ulong seek(long delta, Anchor whence=Anchor.Begin);
 
     /**
      * Determine the current file position.
      *
-     * Returns ~0 if the operation fails or is not supported.
+     * Returns ulong.max if the operation fails or is not supported.
      */
     final ulong tell() {return seek(0, Anchor.Current); }
 
@@ -219,7 +219,7 @@ interface Seek
      * returns: false if the stream cannot be seeked, true if it can.  True
      * does not mean that a given seek call will succeed.
      */
-    @property bool seekable() const;
+    @property bool seekable();
 }
 
 /**
@@ -227,7 +227,7 @@ interface Seek
  * InputStream provides no buffering or high-level constructs, it's simply an
  * abstraction of a low-level stream mechanism.
  */
-interface InputStream : Seek
+interface InputStream : Seekable
 {
     /**
      * Read data from the stream.
@@ -248,7 +248,7 @@ interface InputStream : Seek
     void close();
 }
 
-interface BufferedInput : Seek
+/+interface BufferedInput : Seekable
 {
     /**
      * Read data from the stream.
@@ -278,12 +278,12 @@ interface BufferedInput : Seek
      * End a read
      */
     void end(); +/
-}
+}+/
 
 /**
  * simple output interface
  */
-interface OutputStream : Seek
+interface OutputStream : Seekable
 {
     /**
      * Write a chunk of data to the output stream
@@ -302,7 +302,7 @@ interface OutputStream : Seek
     void close();
 }
 
-interface BufferedOutput : Seek
+/+interface BufferedOutput : Seekable
 {
     /**
      * Write a chunk of data to the buffer, flushing if necessary.
@@ -343,7 +343,7 @@ interface BufferedOutput : Seek
      * Close the stream.  This releases any resources from the object.
      */
     void close();
-}
+}+/
 
 class File : InputStream, OutputStream
 {
@@ -354,6 +354,9 @@ class File : InputStream, OutputStream
     //
     // fd is set to -1 when the stream is closed
     private int fd = -1;
+
+    // -1 = can't seek, 1 = can seek, 0 = uninitialized
+    private byte _canSeek = 0;
 
     // flag indicating the destructor should not close the stream.  Useful when
     // a File does not own the fd in question.
@@ -431,7 +434,7 @@ class File : InputStream, OutputStream
 
     long seek(long delta, Anchor whence=Anchor.Begin)
     {
-        auto retval = lseek64(fd, delta, cast(int)whence);
+        auto retval = .lseek64(fd, delta, cast(int)whence);
         if(retval == -1)
         {
             // TODO: probably need an I/O exception
@@ -440,11 +443,15 @@ class File : InputStream, OutputStream
         return retval;
     }
 
-    @property bool seekable() const
+    @property bool seekable()
     {
         // by default, we return true, because we cannot determine if a generic
         // file descriptor can be seeked.
-        return true;
+        if(!_canSeek)
+        {
+            _canSeek = .lseek64(fd, 0, Anchor.Current) == -1 ? -1 : 1;
+        }
+        return _canSeek > 0;
     }
 
     size_t read(ubyte[] data)
@@ -474,23 +481,31 @@ class File : InputStream, OutputStream
      */
     void close()
     {
-        if(fd != -1)
-            .close(fd);
+        if(fd != -1 && .close(fd) < 0)
+            throw new Exception("close failed, check errno");
         fd = -1;
     }
 
     /**
      * Destructor.  This is used as a safety net, in case the stream isn't
-     * closed before being destroyed in the GC.
+     * closed before being destroyed in the GC.  It is recommended to close
+     * deterministically using close, because there is no guarantee the GC will
+     * call this destructor.
      */
     ~this()
     {
-        if(_closeOnDestroy)
-            close();
-        else
-            fd = -1;
+        if(_closeOnDestroy && fd != -1)
+        {
+            // can't check this for errors, because we can't throw in a
+            // destructor.
+            .close(fd);
+        }
+        fd = -1;
     }
 
+    /**
+     * Get the OS-specific handle for this File
+     */
     @property int handle()
     {
         return fd;
@@ -499,10 +514,9 @@ class File : InputStream, OutputStream
 
 /**
  * The D buffered input stream wraps a source InputStream with a buffering
- * system implemented in D.  Contrast this with the CStream which
- * uses C's FILE* abstraction.
+ * system implemented purely in D.
  */
-class DInput : BufferedInput
+final class DInput : Seekable
 {
     protected
     {
@@ -554,7 +568,15 @@ class DInput : BufferedInput
         this.buffer.length = this.buffer.capacity;
     }
 
-    final size_t read(ubyte[] data)
+    /**
+     * Read bytes into a buffer.  Note that this may copy data to an internal
+     * buffer first before copying to the parameter.  However, every attempt is
+     * made to minimize the double-buffering.
+     *
+     * Returns the number of bytes read. 0 means EOF, nonzero but less than
+     * data.length does NOT indicate EOF.
+     */
+    size_t read(ubyte[] data)
     {
         size_t result = 0;
         // determine if there is any data in the buffer.
@@ -717,20 +739,18 @@ class DInput : BufferedInput
      * Read data until a condition is satisfied.
      *
      * Buffers data from the input stream until the delegate returns other than
-     * ~0.  The delegate is passed the data read so far, and the start of the
-     * data just read.  The deleate should return ~0 if the condition is not
-     * satisfied, or the number of bytes that should be returned otherwise.
+     * size_t.max.  The delegate is passed the data read so far, and the start
+     * of the data just read.  The deleate should return size_t.max if the
+     * condition is not satisfied, or the number of bytes that should be
+     * consumed otherwise.
      *
-     * When no more bytes can be read, the function will be called with start
-     * == data.length.  The function has the option of returning ~0, which
-     * means, return the data read so far.  Or it can return a valid status,
-     * which means only that data will be read.
+     * When no more bytes can be read, the delegate will be called with start
+     * == data.length.  The delegate has the option of returning size_t.max,
+     * which means, return the data read so far.  Or it can return a valid
+     * status, which means only that data will be read.
      *
-     * If the function returns 0, then 0 bytes will be returned, and no data
-     * will be consumed.
-     *
-     * Any data that satisfies the condition will be considered consumed from
-     * the stream.
+     * If the delegate returns 0, then 0 bytes will be returned, and no data
+     * will be consumed.  You can use this to peek at data.
      *
      * params: process = A delegate to determine satisfaction of a condition
      * per the terms above.
@@ -739,26 +759,26 @@ class DInput : BufferedInput
      * condition.  Note that this data may be owned by the buffer and so
      * shouldn't be written to or stored for later use without duping.
      */
-    final const(ubyte)[] readUntil(scope size_t delegate(const(ubyte)[] data, size_t start) process)
+    const(ubyte)[] readUntil(scope size_t delegate(const(ubyte)[] data, size_t start) process)
     {
         debug(stdio) printf("readUntil, readpos=%d, decoded=%d, valid=%d, buffer.length=%d\n", readpos, decoded, valid, buffer.length);
         // read data from the buffer/stream until the condition is met,
         // expanding the buffer as necessary
         auto d = buffer[readpos..decoded];
-        auto status = d.length ? process(d, 0) : ~0;
+        auto status = d.length ? process(d, 0) : size_t.max;
 
         // TODO: this simple version always moves data to the front
-        // of the buffer if the buffer is filled, but a smarter version
-        // could probably only move data when it's most efficient.  We
-        // probably need GC support for that.
-        if(status == ~0 && readpos > 0)
+        // of the buffer if the buffer needs to be filled, but a smarter
+        // version could probably only move data when it's most efficient.
+        if(status == size_t.max && readpos > 0)
         {
-            memmove(buffer.ptr, buffer.ptr + readpos, valid -= readpos);
+            if((valid -= readpos) > 0)
+                memmove(buffer.ptr, buffer.ptr + readpos, valid);
             decoded -= readpos;
             readpos = 0;
         }
 
-        while(status == ~0)
+        while(status == size_t.max)
         {
             auto avail = buffer.length - valid;
             if(avail < minReadSize)
@@ -775,7 +795,7 @@ class DInput : BufferedInput
                 // no more data available from the stream, process the EOF
                 if(decoded > 0)
                     status = process(buffer[0..decoded], decoded);
-                if(status == ~0)
+                if(status == size_t.max)
                     status = decoded;
             }
             else
@@ -796,7 +816,7 @@ class DInput : BufferedInput
         // adjust the read buffer, and return the data.
 
         auto ep = readpos + status;
-        d = buffer[readpos..readpos + status];
+        d = buffer[readpos..ep];
         if(ep == valid)
             valid = readpos = decoded = 0;
         else
@@ -807,8 +827,10 @@ class DInput : BufferedInput
     /**
      * Skips up to nbytes of input in the buffer.  If there are less than
      * nbytes in the buffer, the buffer is simply emptied.
+     *
+     * Returns the number of bytes skipped.
      */
-    final size_t skip(size_t nbytes)
+    size_t skip(size_t nbytes)
     {
         auto remaining = decoded - readpos;
         if(nbytes > remaining)
@@ -818,12 +840,12 @@ class DInput : BufferedInput
     }
 
     /**
-     * Read until a certain sequence is found.  The returned data includes the
-     * sequence.
+     * Read until a certain sequence of bytes is found.  The returned data
+     * includes the sequence.
      */
-    final const(ubyte)[] readUntil(const(ubyte)[] lineterm)
+    const(ubyte)[] readUntil(const(ubyte)[] term)
     {
-        immutable lastbyte = lineterm[$-1];
+        immutable lastbyte = term[$-1];
         size_t _checkDelim1(const(ubyte)[] data, size_t start)
         {
             auto ptr = data.ptr + start;
@@ -833,22 +855,22 @@ class DInput : BufferedInput
                 if(*ptr == lastbyte)
                     break;
             }
-            return ptr == end ? ~0 : ptr - data.ptr + 1;
+            return ptr == end ? size_t.max : ptr - data.ptr + 1;
         }
 
         size_t _checkDelimN(const(ubyte)[] data, size_t start)
         {
             // TODO; can try optimizing this
-            auto ptr = data.ptr + start + lineterm.length - 1;
+            auto ptr = data.ptr + start + term.length - 1;
             auto end = data.ptr + data.length;
-            auto ltend = lineterm.ptr + lineterm.length - 1;
+            auto ltend = term.ptr + term.length - 1;
             for(;ptr < end; ++ptr)
             {
                 if(*ptr == lastbyte)
                 {
                     // triggers a check
-                    auto ptr2 = ptr - lineterm.length + 1;
-                    auto ltptr = lineterm.ptr;
+                    auto ptr2 = ptr - term.length + 1;
+                    auto ltptr = term.ptr;
                     for(; ltptr < ltend; ++ltptr, ++ptr2)
                         if(*ltptr != *ptr2)
                             break;
@@ -856,14 +878,14 @@ class DInput : BufferedInput
                         break;
                 }
             }
-            return ptr >= end ? ~0 : ptr - data.ptr + 1;
+            return ptr >= end ? size_t.max : ptr - data.ptr + 1;
         }
 
-        return lineterm.length == 1 ? readUntil(&_checkDelim1) : readUntil(&_checkDelimN);
+        return term.length == 1 ? readUntil(&_checkDelim1) : readUntil(&_checkDelimN);
     }
 
     /// ditto
-    final const(ubyte)[] readUntil(ubyte ub)
+    const(ubyte)[] readUntil(ubyte ub)
     {
         return readUntil((&ub)[0..1]);
     }
@@ -894,14 +916,14 @@ class DInput : BufferedInput
         // read data from the buffer/stream until the condition is met,
         // expanding the input array as necessary
         auto d = buffer[readpos..decoded];
-        size_t status = ~0;
+        size_t status = size_t.max;
         size_t avalid = 0;
         size_t adecoded = 0;
         if(d.length)
         {
             // see if the buffer satisfies
             status = process(d, 0);
-            if(status != ~0)
+            if(status != size_t.max)
             {
                 // the buffer was enough, copy it to the array
                 if(arr.length < status)
@@ -929,7 +951,7 @@ class DInput : BufferedInput
         }
 
 
-        while(status == ~0)
+        while(status == size_t.max)
         {
             if(arr.length - avalid < minReadSize)
             {
@@ -943,7 +965,7 @@ class DInput : BufferedInput
             {
                 // no more data available from the stream, process the EOF
                 status = process(arr[0..adecoded], adecoded);
-                if(status == ~0)
+                if(status == size_t.max)
                     status = adecoded;
             }
             else
@@ -967,6 +989,8 @@ class DInput : BufferedInput
         if(buffer.length < putback)
         {
             buffer.length = putback;
+            // always use up all available space.
+            buffer.length = buffer.capacity;
         }
         buffer[0..putback] = arr[status..avalid];
         valid = putback;
@@ -975,7 +999,20 @@ class DInput : BufferedInput
         return status;
     }
 
-    override ulong seek(long delta, Anchor whence=Anchor.Begin)
+    /**
+     * Seek a buffered stream.
+     *
+     * This behaves exactly as Seekable.seek describes, except for the
+     * additional feature that if you seek within the buffer, the function
+     * succeeds even if the underlying device is not seekable.
+     *
+     * Therefore, even if seekable returns false, it's still possible to seek
+     * within the buffer.
+     *
+     * The return value will be ulong.max if a buffer seek is performed, but
+     * the underlying device does not support seeking.
+     */
+    ulong seek(long delta, Anchor whence=Anchor.Begin)
     {
         switch(whence)
         {
@@ -994,7 +1031,7 @@ class DInput : BufferedInput
 
                 if(input.seekable())
                     return input.tell() - (valid - readpos);
-                return ~0;
+                return ulong.max;
             }
 
         case Anchor.Begin, Anchor.End:
@@ -1003,27 +1040,48 @@ class DInput : BufferedInput
             return input.seek(delta, whence);
 
         default:
-            // TODO: throw an exception
-            return ~0;
+            assert(0, "Invalid anchor");
         }
     }
 
-    override @property bool seekable() const
+    /**
+     * Is this stream seekable?
+     *
+     * Returns true if the underlying device is seekable.  Note that even if
+     * the underlying device is not seekable, buffer seeking is still allowed.
+     */
+    @property bool seekable()
     {
         return input.seekable();
     }
 
+    /**
+     * Returns the size of the valid data in the buffer.  Note that the buffer
+     * may be larger than this, and the number of bytes read from the stream
+     * may even be larger.  This denotes the seekable range of the buffer.
+     */
     @property size_t bufsize()
     {
-        return buffer.length;
+        return decoded;
     }
 
+    /**
+     * The number of bytes readable in the buffer.  If one reads this many
+     * bytes, no data will be read from the device.  Also you can skip this
+     * many bytes ahead or seek this many bytes ahead without invalidating the
+     * buffer.
+     */
     @property size_t readable()
     {
         return decoded - readpos;
     }
 
-    override void close()
+    /**
+     * Close the input device.  It is recommended to do this instead of letting
+     * the GC close the device because the GC is not guaranteed to run the
+     * device's destructor.
+     */
+    void close()
     {
         input.close();
         readpos = valid = decoded = 0;
@@ -1058,6 +1116,10 @@ class DInput : BufferedInput
         return _decode;
     }
 
+    /**
+     * Get a range on this input stream based on the size of the chunks to be
+     * read.
+     */
     @property ByChunk byChunk(size_t chunkSize = 0)
     {
         if(chunkSize == 0)
@@ -1067,9 +1129,12 @@ class DInput : BufferedInput
     }
 }
 
-class DOutput : BufferedOutput
+/**
+ * The D buffered output stream.  This class wraps an output stream with
+ * buffering capability implemented purely in D.
+ */
+final class DOutput : Seekable
 {
-
     protected
     {
         // the source stream
@@ -1114,7 +1179,7 @@ class DOutput : BufferedOutput
     }
 
     /+ commented out for now, not sure how shared classes are going to work for I/O
-    final void begin()
+    void begin()
     in
     {
         assert(!_noflushcheck);
@@ -1129,7 +1194,7 @@ class DOutput : BufferedOutput
         _startofwrite = writepos;
     }
 
-    final void end()
+    void end()
     in
     {
         assert(_noflushcheck);
@@ -1152,7 +1217,7 @@ class DOutput : BufferedOutput
                 if(_encode)
                     _encode(buffer[0..endpos]);
 
-                ensureWrite(buffer[0..endpos], endpos);
+                ensureWrite(buffer[0..endpos]);
 
                 // now, we need to move the data to the front of the buffer
                 // this is the only place we have to do this.
@@ -1164,7 +1229,7 @@ class DOutput : BufferedOutput
         _startofwrite = 0;
     } +/
 
-    final void put(const(ubyte)[] data)
+    void put(const(ubyte)[] data)
     {
         if(!data.length)
             return;
@@ -1200,7 +1265,7 @@ class DOutput : BufferedOutput
                     data = data[ntoCopy..$];
                     auto nencoded = _encode(buffer[0..totalbytes]);
                     //printf("nencoded = %u, totalbytes=%u\n", nencoded, totalbytes);
-                    ensureWrite(buffer[0..nencoded], nencoded);
+                    ensureWrite(buffer[0..nencoded]);
                     if(totalbytes != nencoded)
                     {
                         // need to move the non-encoded bytes to the front of
@@ -1224,7 +1289,7 @@ class DOutput : BufferedOutput
                     buffer[writepos..minwrite] = data[0..ntoCopy];
                     auto ndecoded = _encode(buffer[0..minwrite]);
                     assert(ndecoded == minwrite); // nowhere to go if this isn't true.
-                    ensureWrite(buffer[0..minwrite], minwrite);
+                    ensureWrite(buffer[0..minwrite]);
                     buffer[0..data.length - ntoCopy] = data[ntoCopy..$];
                     writepos = data.length - ntoCopy;
                     // TODO: not sure about this...
@@ -1255,7 +1320,7 @@ class DOutput : BufferedOutput
                             {
                                 auto ntoCopy = minwrite - writepos;
                                 buffer[writepos..minwrite] = data[0..ntoCopy];
-                                ensureWrite(buffer[0..minwrite], minwrite);
+                                ensureWrite(buffer[0..minwrite]);
                                 // no more data in the buffer
                                 writepos = 0;
                                 data = data[ntoCopy..$];
@@ -1278,7 +1343,7 @@ class DOutput : BufferedOutput
                                 // copy enough to satisfy minwrite, then we
                                 // reduce to the simple case.
                                 buffer[writepos..minwrite] = data[0..minwrite - writepos];
-                                ensureWrite(buffer[0..minwrite], minwrite);
+                                ensureWrite(buffer[0..minwrite]);
                                 // update state
                                 data = data[minwrite - writepos..$];
                                 minwrite = 0;
@@ -1292,7 +1357,7 @@ class DOutput : BufferedOutput
                                 // from data.
                                 auto ntoCopy = buffer.length - writepos;
                                 buffer[writepos..$] = data[0..ntoCopy];
-                                ensureWrite(buffer, buffer.length);
+                                ensureWrite(buffer);
 
                                 // update state
                                 data = data[ntoCopy..$];
@@ -1333,6 +1398,7 @@ class DOutput : BufferedOutput
             // everything.
             if(data.length <= 4)
             {
+                // do not use the runtime, that is overkill.
                 auto p = data.ptr;
                 auto e = data.ptr + data.length;
                 while(p != e)
@@ -1346,7 +1412,8 @@ class DOutput : BufferedOutput
         }
     }
 
-    final void putByte(ubyte b)
+    // TODO: see if we really need this...
+    void putByte(ubyte b)
     {
         // never useful to write one byte to the stream.  Just try writing to
         // the buffer, and if it's full, flush it.
@@ -1357,7 +1424,14 @@ class DOutput : BufferedOutput
         }
     }
 
-    override ulong seek(long delta, Anchor whence=Anchor.Begin)
+    /**
+     * Seek the buffered output.
+     *
+     * Any seek besides to the current position will flush any unwritten data
+     * to the device.  Unlike DInput, this does not allow buffer seeking, to
+     * avoid complex situations.
+     */
+    ulong seek(long delta, Anchor whence=Anchor.Begin)
     {
         switch(whence)
         {
@@ -1378,49 +1452,64 @@ class DOutput : BufferedOutput
 
         default:
             // TODO: throw an exception
-            return ~0;
+            return ulong.max;
         }
     }
 
-    override @property bool seekable() const
+    /**
+     * Is this buffered stream seekable?
+     *
+     * Returns true if the underlying device is seekable.
+     */
+    @property bool seekable()
     {
         return _output.seekable();
     }
 
+    /**
+     * How large the buffer is.
+     */
     @property size_t bufsize()
     {
         return buffer.length;
     }
 
+    /**
+     * How many bytes are ready to be written to the stream.  Note that in
+     * certain cases, the data cannot all be encoded, so it may not all be
+     * written on a flush.
+     */
     @property size_t readyToWrite()
     {
         return writepos;
     }
 
-    @property size_t writeable()
-    {
-        return buffer.length - writepos;
-    }
-
     /**
      * Close the stream.  Note, if you do not call this function, there is no
      * guarantee the data will be flushed to the stream.  This is due to the
-     * non-deterministic behavior of the GC.
+     * non-deterministic behavior of the GC.  It's highly recommended to call
+     * this function when you are done with a DOutput object.
      */
-    override void close()
+    void close()
     {
         flush();
         _output.close();
     }
 
-    override void flush()
+    /**
+     * Flush the stream.  This outputs all buffered data so far to the device.
+     *
+     * Note that if some data cannot be encoded, it will not be written to the
+     * device, but will be moved to the front of the buffer for the next write.
+     */
+    void flush()
     {
         if(writepos)
         {
             if(_encode)
             {
                 auto nencoded = _encode(buffer[0..writepos]);
-                ensureWrite(buffer[0..nencoded], writepos);
+                ensureWrite(buffer[0..nencoded]);
                 if(writepos != nencoded)
                 {
                     // need to move the non-encoded bytes to the front of
@@ -1437,7 +1526,7 @@ class DOutput : BufferedOutput
             }
             else
             {
-                ensureWrite(buffer[0..writepos], writepos);
+                ensureWrite(buffer[0..writepos]);
                 writepos = _startofwrite = 0;
             }
         }
@@ -1454,8 +1543,8 @@ class DOutput : BufferedOutput
      * from the data that should be flushed.  If there is more than one
      * trigger, return the *largest* such value.
      *
-     * This function will be overridden if the total data exceeds the buffer
-     * size.
+     * The return value will be ignored if the total data exceeds the buffer
+     * size.  In this case, the data must be flushed to not overrun the buffer.
      */
     @property void flushCheck(ptrdiff_t delegate(const(ubyte)[] newData) dg)
     {
@@ -1494,29 +1583,31 @@ class DOutput : BufferedOutput
         return _encode;
     }
 
-    private size_t ensureWrite(const(ubyte)[] data, ptrdiff_t minsize)
-    in
-    {
-        assert(minsize >= 0);
-        assert(minsize <= data.length);
-    }
-    body
+    private size_t ensureWrite(const(ubyte)[] data)
     {
         // write in a loop until the minimum data is written.
         size_t result;
-        while(minsize > 0)
+        while(data.length > 0)
         {
             auto nwritten = _output.put(data);
             if(!nwritten) // eof
                 break;
             result += nwritten;
-            minsize -= nwritten;
             data = data[nwritten..$];
         }
         return result;
     }
 }
 
+/**
+ * Range which reads data in chunks from an input stream.  It relies on
+ * buffered input, so if you give it an unbuffered stream, it will construct a
+ * buffer around it.
+ *
+ * Note that if you are using ByChunk and some other mechanism to read the same
+ * buffered stream, the range element might be corrupted.  In other words,
+ * using the buffered stream can make the current chunk invalid.
+ */
 struct ByChunk
 {
     private DInput _input;
@@ -1557,7 +1648,7 @@ struct ByChunk
 
     private size_t stopCondition(const(ubyte)[] data, size_t start)
     {
-        return data.length >= _size ? _size : ~0;
+        return data.length >= _size ? _size : size_t.max;
     }
 
     /**
@@ -1569,7 +1660,10 @@ struct ByChunk
     }
 }
 
-class CStream : BufferedInput, BufferedOutput
+/**
+ * C buffered input/output stream.  This wraps a C FILE * object.
+ */
+final class CStream : Seekable
 {
     private
     {
@@ -1577,14 +1671,21 @@ class CStream : BufferedInput, BufferedOutput
         char *_buf; // C malloc'd buffer used to support getDelim
         size_t _bufsize; // size of buffer
         bool _closeOnDestroy; // do not close stream from destructor
+        byte _canSeek;
     }
 
     /**
+     * Constructor.
+     *
+     * params:
+     * source = The FILE * stream to wrap.
+     * closeOnDestroy = True if you want the destructor of this object to close
+     * the wrapped stream.
      */
     this(FILE *source, bool closeOnDestroy = true)
     {
         this.source = source;
-        this._closeOnDestroy = !closeOnDestroy;
+        this._closeOnDestroy = closeOnDestroy;
     }
 
     // comment out for now, not sure how this will work.
@@ -1598,7 +1699,10 @@ class CStream : BufferedInput, BufferedOutput
         FUNLOCK(source);
     }+/
 
-    override ulong seek(long delta, Anchor whence=Anchor.Begin)
+    /**
+     * Seek the stream.
+     */
+    ulong seek(long delta, Anchor whence=Anchor.Begin)
     {
         static if(is(typeof(&fseeko64)))
         {
@@ -1628,13 +1732,25 @@ class CStream : BufferedInput, BufferedOutput
         }
     }
 
-    override @property bool seekable() const
+    /**
+     * Returns true if a stream is seekable.
+     */
+    @property bool seekable()
     {
-        // can always try to seek a FILE, no way to tell from the FILE.
-        return true;
+        if(!_canSeek)
+        {
+            _canSeek = .ftell(source) == -1 ? -1 : 1;
+        }
+        return _canSeek > 0;
     }
 
-    override size_t read(ubyte[] data)
+    /**
+     * Read data from the stream.
+     *
+     * The data is read into the given buffer.
+     * returns: less than data.length on eof, otherwise, number of bytes read.
+     */
+    size_t read(ubyte[] data)
     {
         size_t result = .fread(data.ptr, ubyte.sizeof, data.length, source);
         if(result < data.length)
@@ -1646,24 +1762,37 @@ class CStream : BufferedInput, BufferedOutput
         return result;
     }
 
+    /**
+     * Read a line of data from the stream.  You can dictate what character to
+     * use for line termination.
+     * params:
+     * lineterm = The character to use to detect an end of line.
+     * returns: The line of data from the stream, including the delimiter if
+     * found.
+     */
     const(char)[] readln(dchar lineterm)
     {
         auto result = .getdelim(&_buf, &_bufsize, lineterm, source);
         if(result < 0)
-            // Throw instead?
+            // TODO: Throw instead?
             return null;
         return _buf[0..result];
     }
 
     /**
-     * Get the underlying FILE*.  Use this for optimizing when possible.
+     * Get the underlying FILE*.
      */
     @property FILE *cFile()
     {
         return source;
     }
 
-    override void close()
+    /**
+     * Close the stream.  This will be done by the GC if you do not call it
+     * manually, but it is highly recommended to call this manually, as the GC
+     * is not guaranteed to run destructors.
+     */
+    void close()
     {
         if(source)
            fclose(source);
@@ -1674,29 +1803,43 @@ class CStream : BufferedInput, BufferedOutput
         _bufsize = 0;
     }
 
-    // BufferedOutput interface
+    /**
+     * Write data to the stream.
+     * 
+     * if not all the data could be written, an exception is thrown.
+     */
     void put(const(ubyte)[] data)
     {
         // optimized, just write using fwrite.
         auto result = fwrite(data.ptr, ubyte.sizeof, data.length, source);
         if(result < data.length)
         {
-            stderr.writeln("Error writing data: ", result, " ", data.length);
             throw new Exception("Error writing data");
         }
     }
 
-    void putByte(ubyte data)
+    /// ditto
+    alias put write;
+
+    /**
+     * Write a single dchar to the stream (calls fputc)
+     */
+    void putc(dchar data)
     {
         fputc(data, source);
     }
 
+    /**
+     * Flush all the unwritten data to the underlying device (calls fflush)
+     */
     void flush()
     {
         fflush(source);
     }
 
-    // just in case close isn't called before the GC gets to this object.
+    /**
+     * Destructor.  If the object is set to close the stream, it is done.
+     */
     ~this()
     {
         if(!_closeOnDestroy)
@@ -1704,6 +1847,9 @@ class CStream : BufferedInput, BufferedOutput
         close();
     }
 
+    /**
+     * Open a file as a CStream using the given file mode
+     */
     static CStream open(const char[] name, const char[] mode = "rb")
     {
         return new CStream(.fopen(toStringz(name), toStringz(mode)));
@@ -1757,7 +1903,6 @@ body
     {
     case wchar.sizeof:
         {
-            //printf("casting ushort, %x, %x\n", data.ptr, data.length);
             ushort[] sdata = cast(ushort[])data;
             if((cast(size_t)sdata.ptr & 0x03) != 0)
             {
@@ -1770,7 +1915,6 @@ body
             // do majority using uint
             // TODO:  see if this can be optimized further, or if there are
             // better options for 64-bit.
-            //printf("casting uint\n");
 
             uint[] idata = cast(uint[])sdata[0..$ - ($ % 2)];
             if(sdata.length % 2 != 0)
@@ -1787,7 +1931,6 @@ body
         break;
     case dchar.sizeof:
         // swap every 4 bytes
-            //printf("casting uint (utf32)\n");
         foreach(ref t; cast(uint[])data)
         {
             /*t = ((t << 24) & 0xff000000) |
@@ -1803,20 +1946,25 @@ body
 }
 
 
-// formatted input stream
+/**
+ * Input stream that supports utf
+ *
+ * This stream can be configured to use C or D-style streams.  The C-style
+ * option is available in case you want to inter-mix C and D code
+ * printing/reading.  Note that the D version is more optimized, has less
+ * limitations, and is highly recommended.
+ *
+ * TextInput has full reference semantics.
+ */
 struct TextInput
 {
+    // the implementation struct, lives on the heap.
     private struct Impl
     {
         CStream input_c;
         DInput input_d;
         StreamWidth width;
         ByteOrder bo;
-
-        @property BufferedInput input()
-        {
-            return input_d ? cast(BufferedInput)input_d : input_c;
-        }
 
         size_t decode(ubyte[] data)
         {
@@ -1902,33 +2050,30 @@ struct TextInput
             }
         }
 
+        // used to ensure the width is properly set without reading the stream
+        // data.
         size_t determineWidth(const(ubyte)[] data, size_t start)
         {
-            return width == StreamWidth.AUTO ? ~0 : 0;
+            return width == StreamWidth.AUTO ? size_t.max : 0;
         }
     }
 
+    // the implementation pointer.
     private Impl* _impl;
 
 
     /**
-     * Fetch the buffered input stream that backs this text outputter
+     * Bind the TextInput to a given input stream.  A DInput will be used to
+     * support the TextInput.
      */
-    @property BufferedInput input()
-    in
-    {
-        assert(_impl);
-    }
-    body
-    {
-        return _impl.input;
-    }
-
     void bind(InputStream ins, StreamWidth width = StreamWidth.AUTO, ByteOrder bo = ByteOrder.Native)
     {
         bind(new DInput(ins), width, bo);
     }
 
+    /**
+     * Bind the TextInput to a buffered input stream.
+     */
     void bind(DInput ins, StreamWidth width = StreamWidth.AUTO, ByteOrder bo = ByteOrder.Native)
     in
     {
@@ -1949,11 +2094,18 @@ struct TextInput
         _impl.width = width;
     }
 
+    /**
+     * Bind the text input to a give C FILE object.  A CStream will be used to
+     * support the TextInput.
+     */
     void bind(FILE *fp)
     {
         bind(new CStream(fp));
     }
 
+    /**
+     * Bind the text input to a CStream.
+     */
     void bind(CStream cstr)
     {
         if(!_impl)
@@ -1963,6 +2115,7 @@ struct TextInput
         _impl.width = StreamWidth.UTF8;
     }
 
+    // used to check for the end of a line.
     private static size_t checkLineT(T)(const(ubyte)[] ubdata, size_t start, dchar terminator)
     {
         auto data = cast(const(T)[])ubdata;
@@ -1976,14 +2129,19 @@ struct TextInput
                 // need to go one more index.
                 done = true;
         }
-        return done ? data.length * T.sizeof: ~0;
+        return done ? data.length * T.sizeof: size_t.max;
     }
 
+    // transcode a certain character width to another.  TODO: see if we really
+    // need to use immutable, or if we can possibly reuse the buffer.
     private immutable(T)[] transcode(T, U)(const(ubyte)[] data)
     {
         return to!(immutable(T)[])(cast(const(U)[])data);
     }
 
+    /**
+     * Read a line of text from the stream.
+     */
     const(T)[] readln(T = char)(dchar terminator = '\n') if(is(T == char) || is(T == wchar) || is(T == dchar))
     {
         if(_impl.input_d)
@@ -2044,6 +2202,7 @@ struct TextInput
         }
     }
 
+    // input range supporting the CStream object
     private struct InputRangeC
     {
         // TODO: locking
@@ -2088,6 +2247,8 @@ struct TextInput
         }
     }
 
+    // input range supporting the DInput object, parameterized on character
+    // type.
     private struct InputRangeD(CT)
     {
         private
@@ -2136,7 +2297,7 @@ struct TextInput
                         if(start == data.length)
                             // EOF, couldn't get a valid character.
                             return 0;
-                        return ~0;
+                        return size_t.max;
                     }
                     else
                     {
@@ -2182,7 +2343,7 @@ struct TextInput
                     if(data.length == start)
                         return 0;
                     else
-                        return ~0;
+                        return size_t.max;
                 }
                 auto wp = cast(const(wchar)*)data.ptr;
                 cur = *wp;
@@ -2203,7 +2364,7 @@ struct TextInput
                     if(start == data.length)
                         return 0;
                     else
-                        return ~0;
+                        return size_t.max;
                 }
                 else if(wp[1] < 0xDC00 || wp[1] >= 0xE000)
                 {
@@ -2225,7 +2386,7 @@ struct TextInput
                         // do not consume a partial-character
                         return 0;
                     else
-                        return ~0;
+                        return size_t.max;
                 }
                 // got at least one dchar
                 cur = *cast(const(dchar)*)data.ptr;
@@ -2235,6 +2396,9 @@ struct TextInput
         }
     }
 
+    /**
+     * Formatted read.
+     */
     public uint readf(Data...)(in char[] format, Data data)
     {
         if(_impl.input_d)
@@ -2286,16 +2450,24 @@ struct TextInput
     KeepTerminator keepTerminator;
 }*/
 
-// formatted output stream
-//
-// Note, this should never be on the stack, it should only ever be allocated on
-// the heap or in the global segment.
+/**
+ * Output stream that supports utf
+ *
+ * This stream can be configured to use C or D-style streams.  The C-style
+ * option is available in case you want to inter-mix C and D code
+ * printing/reading.  Note that the D version is more optimized, has less
+ * limitations, and is highly recommended.
+ *
+ * TextOutput has full reference semantics.
+ */
 struct TextOutput
 {
     private struct Impl
     {
-        // the actual buffered output stream.
-        BufferedOutput output;
+        // D style buffered output
+        DOutput output_d;
+        // C style buffered output
+        CStream output_c;
 
         // this is settable at runtime because the interface to a text stream
         // is independent of the character width being sent to it.  Otherwise,
@@ -2308,7 +2480,6 @@ struct TextOutput
             // normalize, we can't encode anything that's a partial character.
             data = data[0..data.length - (data.length % charwidth)];
             __swapBytes(data, charwidth);
-            //printf("made it!\n");
             return data.length;
         }
 
@@ -2343,18 +2514,17 @@ struct TextOutput
     private Impl* _impl;
 
     /**
-     * Fetch the buffered output stream that backs this text outputter
+     * Bind the TextOutput to an output stream object.  A DOutput buffered
+     * stream will be created to support the TextInput.
      */
-    @property BufferedOutput output()
-    {
-        return _impl.output;
-    }
-
     void bind(OutputStream outs, StreamWidth width = StreamWidth.UTF8, ByteOrder bo = ByteOrder.Native)
     {
         bind(new DOutput(outs), width, bo);
     }
 
+    /**
+     * Bind the TextOutput to a buffered DOutput object.
+     */
     void bind(DOutput dbo, StreamWidth width = StreamWidth.UTF8, ByteOrder bo = ByteOrder.Native)
     in
     {
@@ -2401,33 +2571,38 @@ struct TextOutput
             else
                 static assert(0, "Unsupported OS");
         }
-        bindImpl(dbo, width);
-    }
 
-    void bind(FILE *outs)
-    {
-        bindImpl(new CStream(outs), StreamWidth.UTF8);
-    }
-
-    void bind(CStream cstr)
-    {
-        bindImpl(cstr, StreamWidth.UTF8);
-    }
-
-    private void bindImpl(BufferedOutput outs, StreamWidth width = StreamWidth.UTF8)
-    in
-    {
-        assert(width == StreamWidth.UTF8 || width == StreamWidth.UTF16 ||
-               width == StreamWidth.UTF32);
-    }
-    body
-    {
         if(!_impl)
             _impl = new Impl;
-        this._impl.output = outs;
+        this._impl.output_d = dbo;
+        this._impl.output_c = null;
         this._impl.charwidth = width;
     }
 
+    /**
+     * Bind the TextOutput to a FILE * C stream.  A CStream object will be
+     * created to support the TextOutput.
+     */
+    void bind(FILE *outs)
+    {
+        bind(new CStream(outs));
+    }
+
+    /**
+     * Bind the TextOutput to a CStream object.
+     */
+    void bind(CStream cstr)
+    {
+        if(!_impl)
+            _impl = new Impl;
+        this._impl.output_c = cstr;
+        this._impl.output_d = null;
+        this._impl.charwidth = StreamWidth.UTF8;
+    }
+
+    /**
+     * Write data to the stream.
+     */
     void write(S...)(S args)
     in
     {
@@ -2451,6 +2626,11 @@ struct TextOutput
         }
     }
 
+    /**
+     * Write a line of data to the stream.
+     *
+     * This is equivalent to write(args, '\n');
+     */
     void writeln(S...)(S args)
     in
     {
@@ -2476,8 +2656,16 @@ struct TextOutput
 
     private void priv_write(C, S...)(S args)
     {
+        if(_impl.output_d)
+            priv_write_stream!(C)(_impl.output_d, args);
+        else
+            priv_write_stream!(C)(_impl.output_c, args);
+    }
+
+    private void priv_write_stream(C, Output, S...)(Output op, S args)
+    {
         //_output.begin();
-        auto w = OutputRange!C(_impl.output);
+        auto w = OutputRange!(C, Output)(op);
 
         foreach(arg; args)
         {
@@ -2550,10 +2738,18 @@ struct TextOutput
 
     private void priv_writef(C, bool doNewline, S...)(S args)
     {
+        if(_impl.output_d)
+            priv_writef_stream!(C, doNewline)(_impl.output_d, args);
+        else
+            priv_writef_stream!(C, doNewline)(_impl.output_c, args);
+    }
+
+    private void priv_writef_stream(C, bool doNewline, Output, S...)(Output op, S args)
+    {
         static assert(S.length > 0, errorMessage);
         static assert(isSomeString!(S[0]), errorMessage);
         //_output.begin();
-        auto w = OutputRange!C(_impl.output);
+        auto w = OutputRange!(C, Output)(op);
         std.format.formattedWrite(w, args);
         static if(doNewline)
         {
@@ -2563,11 +2759,11 @@ struct TextOutput
     }
 
 
-    private struct OutputRange(CT)
+    private struct OutputRange(CT, Output)
     {
-        BufferedOutput output;
+        Output output;
 
-        this(BufferedOutput output)
+        this(Output output)
         {
             this.output = output;
         }
@@ -2698,9 +2894,9 @@ struct TextOutput
                     // convert the character to utf8
                     if(c <= 0x7f)
                     {
-                        //buf[0] = cast(char)c;
-                        //output.put(cast(ubyte[])buf[0..1]);
-                        output.putByte(cast(ubyte)c);
+                        ubyte buf = cast(ubyte)c;
+                        output.put((&buf)[0..1]);
+                        //output.putByte(cast(ubyte)c);
                     }
                     else
                     {
@@ -2793,7 +2989,10 @@ struct TextOutput
     }
     body
     {
-        _impl.output.flush();
+        if(_impl.output_d)
+            _impl.output_d.flush();
+        else
+            _impl.output_c.flush();
     }
 
     void close()
@@ -2803,10 +3002,15 @@ struct TextOutput
     }
     body
     {
-        if(_impl && _impl.output)
+        if(_impl && _impl.output_d)
         {
-            _impl.output.close();
-            _impl.output = null;
+            _impl.output_d.close();
+            _impl.output_d = null;
+        }
+        else if(_impl && _impl.output_c)
+        {
+            _impl.output_c.close();
+            _impl.output_c = null;
         }
     }
 
