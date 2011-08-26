@@ -2264,6 +2264,13 @@ struct TextInput
 
     /**
      * Read a line of text from the stream.
+     *
+     * Params:
+     * terminator = The terminator character to use when terminating the read.
+     * The terminator character is included in the return value.
+     *
+     * Returns: A buffer which contains the next line.  This may be overwritten
+     * on subsequent calls to this object.
      */
     const(T)[] readln(T = char)(dchar terminator = '\n') if(is(T == char) || is(T == wchar) || is(T == dchar))
     {
@@ -2526,6 +2533,7 @@ struct TextInput
 
     /**
      * Formatted read.
+     * TODO: fill out this doc
      */
     public uint readf(Data...)(in char[] format, Data data)
     {
@@ -2576,9 +2584,38 @@ struct TextInput
             assert(0);
     }
 
+    /**
+     * Get a range that iterates this input stream by line.
+     *
+     * params:
+     * terminator = The terminator character to use when detecting an
+     * end-of-line condition.
+     * keepTerminator = Whether the terminator should be kept when returning
+     * each line.
+     */
     ByLine!Char byLine(Char = char)( Char terminator = '\n', KeepTerminator keepTerminator= KeepTerminator.no)
     {
         return ByLine!Char(this, keepTerminator, terminator);
+    }
+
+    /**
+     * Close the input stream
+     */
+    void close()
+    {
+        if(_impl)
+        {
+            if(_impl.input_c)
+            {
+                _impl.input_c.close();
+                _impl.input_c = null;
+            }
+            else if(_impl.input_d)
+            {
+                _impl.input_d.close();
+                _impl.input_d = null;
+            }
+        }
     }
 }
 
@@ -2873,6 +2910,9 @@ struct TextOutput
         " argument to writef or writefln. If no formatting is needed,"
         " you may want to use write or writeln.";
 
+    /**
+     * Formatted write
+     */
     void writef(S...)(S args)
     {
         static assert(S.length > 0, errorMessage);
@@ -2893,6 +2933,9 @@ struct TextOutput
         }
     }
 
+    /**
+     * Formatted write with terminating newline.
+     */
     void writefln(S...)(S args)
     {
         static assert(S.length > 0, errorMessage);
@@ -3158,6 +3201,9 @@ struct TextOutput
         }
     }
 
+    /**
+     * Flush the output stream
+     */
     void flush()
     in
     {
@@ -3171,6 +3217,9 @@ struct TextOutput
             _impl.output_c.flush();
     }
 
+    /**
+     * Close the output stream.
+     */
     void close()
     in
     {
@@ -3324,7 +3373,9 @@ unittest
     // assert(result == "Hello, world number 42! null", result);
 }
 
-// Most general instance
+/**
+ * Write data to standard output with a terminating newline.
+ */
 void writeln(T...)(T args)
 {
     stdout.writeln(args);
