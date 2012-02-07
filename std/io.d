@@ -12,7 +12,7 @@ Authors:   $(WEB digitalmars.com, Walter Bright),
            $(WEB erdani.org, Andrei Alexandrescu),
            Steven Schveighoffer
  */
-module std.stdio;
+module std.io;
 import std.format;
 import std.string;
 import core.memory, core.stdc.errno, core.stdc.stddef, core.stdc.stdlib,
@@ -1858,31 +1858,29 @@ body
     }
 }
 
-
 /**
- * Input stream that supports utf
+ * Input stream that supports utf using BufferedStream.
  *
- * This stream can be configured to use C or D-style streams.  The C-style
- * option is available in case you want to inter-mix C and D code
- * printing/reading.  Note that the D version is more optimized, has less
- * limitations, and is highly recommended.
- *
- * TextInput has full reference semantics.
+ * TextInput does not have reference semantics.  If a TextStream is destroyed,
+ * it will close its associated buffered stream.  If you need a TextStream to
+ * survive beyond its scope, use std.typecons.RefCounted or std.stdio.File
+ * (which contains a ref-counted TextStream already).
  */
-struct TextInput
+struct TextStream
 {
-    // the implementation struct, lives on the heap.
-    private struct Impl
+    // the opaque members.
+    private
     {
-        CStream input_c;
-        DInput input_d;
-        StreamWidth width;
-        ByteOrder bo;
-        bool discardBOM;
+        BufferedStream _stream;
+        StreamWidth _width;
+        ByteOrder _bo;
+        bool _discardBOM;
 
+        // this method is used as a delegate for decoding data from the buffered
+        // stream.
         size_t decode(ubyte[] data)
         {
-            switch(width)
+            switch(_width)
             {
             case StreamWidth.AUTO:
                 // auto width.  Look for a BOM.  If it's present, use it to
@@ -1896,7 +1894,7 @@ struct TextInput
                 {
                     if(data[0] == 0xFE && data[1] == 0xFF)
                     {
-                        width = StreamWidth.UTF16;
+                        _width = StreamWidth.UTF16;
                         bo = ByteOrder.Big;
                         goto case StreamWidth.UTF16;
                     }
@@ -1907,22 +1905,22 @@ struct TextInput
                         if(data[2] == 0 && data[3] == 0)
                         {
                             // most likely this is UTF32
-                            width = StreamWidth.UTF32;
+                            _width = StreamWidth.UTF32;
                             goto case StreamWidth.UTF32;
                         }
                         // utf-16
-                        width = StreamWidth.UTF16;
+                        _width = StreamWidth.UTF16;
                         goto case StreamWidth.UTF16;
                     }
                     else if(data[0] == 0 && data[1] == 0 && data[2] == 0xFE && data[3] == 0xFF)
                     {
                         bo = ByteOrder.Big;
-                        width = StreamWidth.UTF32;
+                        _width = StreamWidth.UTF32;
                         goto case StreamWidth.UTF32;
                     }
                 }
                 // else this is utf8, bo is ignored.
-                width = StreamWidth.UTF8;
+                _width = StreamWidth.UTF8;
                 return data.length;// no decoding necessary
 
             case StreamWidth.UTF8:
@@ -1964,18 +1962,18 @@ struct TextInput
             }
         }
 
-        // used to ensure the width is properly set without reading the stream
-        // data.
+        // used to ensure the width is properly set without consuming the
+        // stream data.
         size_t determineWidth(const(ubyte)[] data, size_t start)
         {
-            return width == StreamWidth.AUTO ? size_t.max : 0;
+            return _width == StreamWidth.AUTO ? size_t.max : 0;
         }
 
         // used to ensure the width is properly set, and removes the BOM
         size_t readBOM(const(ubyte)[] data, size_t start)
         {
 
-            switch(width)
+            switch(_width)
             {
             case StreamWidth.AUTO:
                 return size_t.max;
@@ -2005,69 +2003,125 @@ struct TextInput
                 assert(0, "invalid stream width");
             }
         }
+
+        // used as a delegate to encode data into a BufferedStream for output.
+        // If _width is set to AUTO, it defaults to UTF8.
+        size_t encode(ubyte[] data)
+        {
+            // TODO: see if we can avoid doing this for every encode if not
+            // necessary.
+            ubyte charwidth = _width & 0x0f;
+            if(charwidth == StreamWidth.AUTO)
+            {
+                // auto width, default to UTF8.
+                charwidth = _width = StreamWidth.UTF8;
+            }
+            version(BigEndian)
+                bool doSwap = charwidth != StreamWidth.UTF8 &&
+                    _bo == ByteOrder.Little;
+            else
+                bool doSwap = charwidth != StreamWidth.UTF8 &&
+                    _bo == ByteOrder.Big;
+            if(doSwap)
+            {
+                // need to swap bytes to achieve correct byte order.
+                // normalize, we can't encode anything that's a partial
+                // character.
+                data = data[0..$ - ($ % charwidth)];
+                __swapBytes(data, charwidth);
+            }
+            return data.length;
+        }
+
+        ptrdiff_t flushLineCheckT(T)(const(T)[] data)
+        {
+            for(const(T)* i = data.ptr + data.length - 1; i >= data.ptr; --i)
+            {
+                if(*i == cast(T)'\n')
+                    return (i - data.ptr + 1) * T.sizeof;
+            }
+            return -1;
+        }
+
+        // used to check whether the stream should be flushed after writing
+        // the given data.
+        ptrdiff_t flushLineCheck(const(ubyte)[] data)
+        {
+            switch(_width & 0x0f)
+            {
+            case StreamWidth.AUTO:
+                // width is auto
+                _wdith = StreamWidth.UTF8;
+                goto case;
+            case StreamWidth.UTF8:
+                return flushLineCheckT(cast(const(char)[])data);
+            case StreamWidth.UTF16:
+                return flushLineCheckT(cast(const(wchar)[])data);
+            case StreamWidth.UTF32:
+                return flushLineCheckT(cast(const(dchar)[])data);
+            default:
+                assert(0, "invalid width");
+            }
+        }
     }
-
-    // the implementation pointer.
-    private Impl* _impl;
-
 
     /**
-     * Bind the TextInput to a given input stream.  A DInput will be used to
-     * support the TextInput.
+     * Bind the TextInput to a given input stream.
      */
-    void bind(InputStream ins, StreamWidth width = StreamWidth.AUTO, ByteOrder bo = ByteOrder.Native)
+    this(BufferedStream str, StreamWidth width = StreamWidth.AUTO, ByteOrder bo = ByteOrder.Native)
     {
-        bind(new DInput(ins), width, bo);
+        // based on the width and byte order settings, configure the stream.
+        _stream = str;
+        _width = width;
+        _bo = bo;
+        _discardBOM = !(_width & StreamWidth.KEEP_BOM);
+        _width &= 0x0f;
+        switch(_width)
+        {
+        case StreamWidth.AUTO:
+            // install all encoders and decoders
+            str.encoder = &encode;
+            str.decoder = &decode;
+            break;
+        case StreamWidth.UTF8:
+            // no encoders/decoders necessary
+            break;
+        case StreamWidth.UTF16:
+        case StreamWidth.UTF32:
+            // check to see what the byte order is
+            version(LittleEndian)
+            {
+                if(_bo == ByteOrder.Big)
+                    goto case StreamWidth.AUTO:
+            }
+            else
+            {
+                if(_bo == ByteOrder.Little)
+                    goto case StreamWidth.AUTO:
+            }
+            break;
+        default:
+            assert(0, "Invalid encoding for text stream!");
+        }
+
+        // now, install a line flush checker if on a terminal.
+        if(auto ostr = cast(IODevice)str.output)
+        {
+            // this is a device stream, check to see if it's a terminal
+            version(Posix)
+            {
+                if(isatty(ostr.handle))
+                {
+                    // by default, do a flush check based on a newline
+                    str.flushCheck = &flushLineCheck;
+                }
+            }
+            else
+                static assert(0, "Unsupported OS");
+        }
     }
 
-    /**
-     * Bind the TextInput to a buffered input stream.
-     */
-    void bind(DInput ins, StreamWidth width = StreamWidth.AUTO, ByteOrder bo = ByteOrder.Native)
-    in
-    {
-        assert((width & ~StreamWidth.KEEP_BOM) == StreamWidth.AUTO ||
-               (width & ~StreamWidth.KEEP_BOM) == StreamWidth.UTF8 ||
-               (width & ~StreamWidth.KEEP_BOM) == StreamWidth.UTF16 ||
-               (width & ~StreamWidth.KEEP_BOM) == StreamWidth.UTF32);
-        assert(bo == ByteOrder.Native || bo == ByteOrder.Little ||
-               bo == ByteOrder.Big);
-    }
-    body
-    {
-        if(!_impl)
-            _impl = new Impl;
-
-        ins.decoder = &_impl.decode;
-        _impl.bo = bo;
-        _impl.input_d = ins;
-        _impl.input_c = null;
-        _impl.width = cast(StreamWidth)(width & ~StreamWidth.KEEP_BOM);
-        _impl.discardBOM = !(width & StreamWidth.KEEP_BOM);
-    }
-
-    /**
-     * Bind the text input to a give C FILE object.  A CStream will be used to
-     * support the TextInput.
-     */
-    void bind(FILE *fp)
-    {
-        bind(new CStream(fp));
-    }
-
-    /**
-     * Bind the text input to a CStream.
-     */
-    void bind(CStream cstr)
-    {
-        if(!_impl)
-            _impl = new Impl;
-        _impl.input_c = cstr;
-        _impl.input_d = null;
-        _impl.width = StreamWidth.UTF8;
-    }
-
-    // used to check for the end of a line.
+    // used to check for the end of a line in readln.
     private static size_t checkLineT(T)(const(ubyte)[] ubdata, size_t start, dchar terminator)
     {
         auto data = cast(const(T)[])ubdata[0..$ - (ubdata.length % T.sizeof)];
@@ -2103,126 +2157,64 @@ struct TextInput
      */
     const(T)[] readln(T = char)(dchar terminator = '\n') if(is(T == char) || is(T == wchar) || is(T == dchar))
     {
-        if(_impl.input_d)
+        if(_discardBOM)
         {
-            if(_impl.discardBOM)
+            _stream.readUntil(&readBOM);
+            _discardBOM = false;
+        }
+        
+        // use the input function to read until a line terminator is
+        // found.
+        size_t checkLine(const(ubyte)[] data, size_t start)
+        {
+            // the "character" we are looking for is determined by the
+            // width.
+            switch(_width)
             {
-                _impl.input_d.readUntil(&_impl.readBOM);
-                _impl.discardBOM = false;
+            case StreamWidth.UTF8:
+                return checkLineT!char(data, start, terminator);
+            case StreamWidth.UTF16:
+                return checkLineT!wchar(data, start, terminator);
+            case StreamWidth.UTF32:
+                return checkLineT!dchar(data, start, terminator);
+            default:
+                assert(0, "invalid character width");
             }
-            // use the input_d function to read until a line terminator is
-            // found.
-            size_t checkLine(const(ubyte)[] data, size_t start)
-            {
-                // the "character" we are looking for is determined by the
-                // width.
-                switch(_impl.width)
-                {
-                case StreamWidth.UTF8:
-                    return checkLineT!char(data, start, terminator);
-                case StreamWidth.UTF16:
-                    return checkLineT!wchar(data, start, terminator);
-                case StreamWidth.UTF32:
-                    return checkLineT!dchar(data, start, terminator);
-                default:
-                    assert(0, "invalid character width");
-                }
-            }
-            const(ubyte)[] result = _impl.input_d.readUntil(&checkLine);
-            if(_impl.width == T.sizeof)
-            {
-                return (cast(const(T)*)result.ptr)[0..result.length / T.sizeof];
-            }
-            else
-            {
-                switch(_impl.width)
-                {
-                case StreamWidth.UTF8:
-                    return transcode!(T, char)(result);
-                case StreamWidth.UTF16:
-                    return transcode!(T, wchar)(result);
-                case StreamWidth.UTF32:
-                    return transcode!(T, dchar)(result);
-                default:
-                    assert(0, "invalid character width");
-                }
-            }
+        }
+        const(ubyte)[] result = _stream.readUntil(&checkLine);
+        if(_width == T.sizeof)
+        {
+            // no tanslation necessary
+            return (cast(const(T)*)result.ptr)[0..result.length / T.sizeof];
         }
         else
         {
-            // C input, must be UTF8
-            assert(_impl.input_c);
-            auto line = _impl.input_c.readln(terminator);
-            if(line.length)
+            switch(_width)
             {
-                static if(is(T == char))
-                    return line;
-                else
-                    return transcode!(T, char)(line);
+            case StreamWidth.UTF8:
+                return transcode!(T, char)(result);
+            case StreamWidth.UTF16:
+                return transcode!(T, wchar)(result);
+            case StreamWidth.UTF32:
+                return transcode!(T, dchar)(result);
+            default:
+                assert(0, "invalid character width");
             }
-            else
-                // no data, no need to do any allocation, etc.
-                return (T[]).init;
         }
     }
 
-    // input range supporting the CStream object
-    private struct InputRangeC
-    {
-        // TODO: locking
-        dchar _crt;
-        FILE *_f;
-        this(CStream cs)
-        {
-            _f = cs.cFile;
-        }
-
-        @property bool empty()
-        {
-            if (_crt == _crt.init)
-            {
-                _crt = fgetc(_f);
-                if (_crt == -1)
-                {
-                    return true;
-                }
-                else
-                {
-                    enforce(ungetc(_crt, _f) == _crt);
-                }
-            }
-            return false;
-        }
-
-        dchar front()
-        {
-            enforce(!empty);
-            return _crt;
-        }
-
-        void popFront()
-        {
-            enforce(!empty);
-            if (fgetc(_f) == -1)
-            {
-                enforce(feof(_f));
-            }
-            _crt = _crt.init;
-        }
-    }
-
-    // input range supporting the DInput object, parameterized on character
-    // type.
-    private struct InputRangeD(CT)
+    // input range supporting the BufferedStream object, parameterized on
+    // character type.
+    private struct InputRange(CT)
     {
         private
         {
-            DInput input;
+            BufferedStream input;
             size_t curlen;
             dchar cur;
         }
 
-        this(DInput di)
+        this(BufferedStream di)
         {
             this.input = di;
             popFront();
@@ -2366,51 +2358,40 @@ struct TextInput
      */
     public uint readf(Data...)(in char[] format, Data data)
     {
-        if(_impl.input_d)
+        if(_discardBOM)
         {
-            if(_impl.discardBOM)
-            {
-                _impl.input_d.readUntil(&_impl.readBOM);
-                if(_impl.width == StreamWidth.AUTO)
-                    // could not read anything
-                    return 0;
-            }
-            else if(_impl.width == StreamWidth.AUTO)
-            {
-                _impl.input_d.readUntil(&_impl.determineWidth);
-                if(_impl.width == StreamWidth.AUTO)
-                    // could not read anything
-                    return 0;
-            }
-            switch(_impl.width)
-            {
-            case StreamWidth.UTF8:
-                {
-                    auto ir = InputRangeD!char(_impl.input_d);
-                    return formattedRead(ir, format, data);
-                }
-            case StreamWidth.UTF16:
-                {
-                    auto ir = InputRangeD!wchar(_impl.input_d);
-                    return formattedRead(ir, format, data);
-                }
-            case StreamWidth.UTF32:
-                {
-                    auto ir = InputRangeD!dchar(_impl.input_d);
-                    return formattedRead(ir, format, data);
-                }
-            default:
-                assert(0); // should not get here
-            }
+            _stream.readUntil(&readBOM);
+            if(_width == StreamWidth.AUTO)
+                // could not read anything
+                return 0;
         }
-        else if(_impl.input_c)
+        else if(_width == StreamWidth.AUTO)
         {
-            writeln("using C input range");
-            auto ir = InputRangeC(_impl.input_c);
-            return formattedRead(ir, format, data);
+            _stream.readUntil(&determineWidth);
+            if(_width == StreamWidth.AUTO)
+                // could not read anything
+                return 0;
         }
-        else
-            assert(0);
+        switch(_width)
+        {
+        case StreamWidth.UTF8:
+            {
+                auto ir = InputRange!char(_stream);
+                return formattedRead(ir, format, data);
+            }
+        case StreamWidth.UTF16:
+            {
+                auto ir = InputRange!wchar(_stream);
+                return formattedRead(ir, format, data);
+            }
+        case StreamWidth.UTF32:
+            {
+                auto ir = InputRange!dchar(_stream);
+                return formattedRead(ir, format, data);
+            }
+        default:
+            assert(0); // should not get here
+        }
     }
 
     /**
@@ -2615,8 +2596,6 @@ struct TextOutput
                 static assert(0, "Unsupported OS");
         }
 
-        if(!_impl)
-            _impl = new Impl;
         this._impl.output_d = dbo;
         this._impl.output_c = null;
         this._impl.charwidth = width;
