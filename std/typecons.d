@@ -2365,6 +2365,66 @@ enum RefCountedAutoInitialize
     yes,
 }
 
+
+/**
+ * mixin template to allow reference counting.
+ */
+template RefCountImpl()
+{
+    private size_t _count;
+    final public void retain()
+    {
+        ++_count;
+    }
+
+    final public bool release()
+    in
+    {
+        assert(_count);
+    }
+    body
+    {
+        return --_count;
+    }
+
+    debug(RefCounted)
+    {
+        private bool _debugging = false;
+        final @property bool debugging() const
+        {
+            return _debugging;
+        }
+        final @property void debugging(bool d)
+        {
+            if (d != _debugging)
+            {
+                writeln(typeof(this).stringof, "@",
+                        cast(void*) _store,
+                        d ? ": starting debug" : ": ending debug");
+            }
+            _debugging = d;
+        }
+
+        final @property size_t _debugrefcount() const
+        {
+            return _count;
+        }
+    }
+}
+
+/**
+ * Used to determine if a type has a ref counting ability.  If it's not
+ * present, it will be generated in a wrapper struct.
+ */
+template hasRefCount(T)
+{
+    enum bool hasRefCount = is(typeof(
+    {
+      T.init.retain();
+      if(T.init.release()) {}
+    }
+}
+
 /**
 Defines a reference-counted object containing a $(D T) value as
 payload. $(D RefCounted) keeps track of all references of an object,
@@ -2399,67 +2459,69 @@ assert(rc1 == 42);
  */
 struct RefCounted(T, RefCountedAutoInitialize autoInit =
         RefCountedAutoInitialize.yes)
-if (!is(T == class))
+if (!is(T == class) || hasRefCount!T)
 {
     struct _RefCounted
     {
-        private Tuple!(T, "_payload", size_t, "_count") * _store;
-        debug(RefCounted)
+        static if(hasRefCount!T)
         {
-            private bool _debugging = false;
-            @property bool debugging() const
-            {
-                return _debugging;
-            }
-            @property void debugging(bool d)
-            {
-                if (d != _debugging)
-                {
-                    writeln(typeof(this).stringof, "@",
-                            cast(void*) _store,
-                            d ? ": starting debug" : ": ending debug");
-                }
-                _debugging = d;
-            }
+            // already ref counting embedded in type
+            static if(is(T == class))
+                alias T _Store;
+            else
+                alias T* _Store;
         }
+        else
+        {
+            // can't get here unless T is not a class and does not have ref
+            // counting.
+            struct _Store_t
+            {
+                T _payload;
+                mixin!(RefCountImpl);
+            }
+            alias _Store_t* _Store;
+        }
+        _Target _store;
 
         private void initialize(A...)(A args)
         {
-            const sz = (*_store).sizeof;
+            static if(is(_Target == class))
+                const sz = __traits(classInstanceSize, _Target);
+            else
+                const sz = (*_store).sizeof;
             auto p = malloc(sz)[0 .. sz];
             if (sz >= size_t.sizeof && p.ptr)
             {
                 GC.addRange(p.ptr, sz);
             }
-            emplace(cast(T*) p.ptr, args);
-            _store = cast(typeof(_store)) p.ptr;
-            _store._count = 1;
+            _store = emplace(cast(typeof(_store)) p.ptr, args);
+            _store.retain(); // initialize to a single reference.
             debug(RefCounted) if (debugging) writeln(typeof(this).stringof,
-                "@", cast(void*) _store, ": initialized with ",
-                    A.stringof);
+                                                     "@", cast(void*) _store, ": initialized with ",
+                                                     A.stringof);
         }
 
         /**
-           Returns $(D true) if and only if the underlying store has been
-           allocated and initialized.
-        */
+          Returns $(D true) if and only if the underlying store has been
+          allocated and initialized.
+         */
         @property bool isInitialized() const
         {
             return _store !is null;
         }
 
         /**
-           Makes sure the payload was properly initialized. Such a
-           call is typically inserted before using the payload.
-        */
+          Makes sure the payload was properly initialized. Such a
+          call is typically inserted before using the payload.
+         */
         void ensureInitialized()
         {
             if (!isInitialized) initialize();
         }
-
     }
-    _RefCounted RefCounted;
 
+    _RefCounted RefCounted;
 /**
 Constructor that initializes the payload.
 
@@ -2477,11 +2539,11 @@ Constructor that tracks the reference count appropriately. If $(D
     this(this)
     {
         if (!RefCounted.isInitialized) return;
-        ++RefCounted._store._count;
+        RefCounted._store.retain();
         debug(RefCounted) if (RefCounted.debugging)
                  writeln(typeof(this).stringof,
                 "@", cast(void*) RefCounted._store, ": bumped refcount to ",
-                RefCounted._store._count);
+                RefCounted._store._debugrefcount);
     }
 
 /**
@@ -2493,13 +2555,12 @@ to deallocate the corresponding resource.
     ~this()
     {
         if (!RefCounted._store) return;
-        assert(RefCounted._store._count > 0);
-        if (--RefCounted._store._count)
+        if (RefCounted._store.release())
         {
             debug(RefCounted) if (RefCounted.debugging)
                      writeln(typeof(this).stringof,
                     "@", cast(void*)RefCounted._store,
-                    ": decrement refcount to ", RefCounted._store._count);
+                    ": decrement refcount to ", RefCounted._store._debugrefcount);
             return;
         }
         debug(RefCounted) if (RefCounted.debugging)
@@ -2510,10 +2571,13 @@ to deallocate the corresponding resource.
         }
         // Done, deallocate
         assert(RefCounted._store);
-        clear(RefCounted._store._payload);
+        static if(is(typeof(RefCounted._store) == class))
+            clear(RefCounted._store);
+        else
+            clear(*RefCounted._store);
         if (hasIndirections!T && RefCounted._store)
             GC.removeRange(RefCounted._store);
-        free(RefCounted._store);
+        free(cast(void*)RefCounted._store);
         RefCounted._store = null;
         debug(RefCounted) if (RefCounted.debugging) writeln("done!");
     }
@@ -2529,7 +2593,16 @@ Assignment operators
 /// Ditto
     void opAssign(T rhs)
     {
-        RefCounted._store._payload = move(rhs);
+        auto rthis = this; // need to release whatever we were pointing at.
+        static if(is(T == class))
+        {
+            RefCounted._store = rhs;
+            RefCounted._store.retain();
+        }
+        else if(is(RefCounted._Store == T*))
+        {
+            *RefCounted._store = move(rhs);
+        }
     }
 
 /**
@@ -2576,6 +2649,13 @@ object as a $(D T).
         }
         return RefCounted._store._payload;
     }
+}
+
+template RefCounted(T, RefCountedAutoInitialize autoInit =
+        RefCountedAutoInitialize.yes)
+if (!is(T == class) && hasRefCount!T)
+{
+    alias RefCounted(Ref
 }
 
 unittest

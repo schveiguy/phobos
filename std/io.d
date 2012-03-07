@@ -1861,10 +1861,11 @@ body
 /**
  * Input stream that supports utf using BufferedStream.
  *
- * TextInput does not have reference semantics.  If a TextStream is destroyed,
- * it will close its associated buffered stream.  If you need a TextStream to
- * survive beyond its scope, use std.typecons.RefCounted or std.stdio.File
- * (which contains a ref-counted TextStream already).
+ * TextStream does not have reference semantics.  If a TextStream is destroyed,
+ * it will close its associated buffered stream (including if it's copied).  If
+ * you need a TextStream to survive beyond its scope, use
+ * std.typecons.RefCounted or std.stdio.File (which contains a ref-counted
+ * TextStream already).
  */
 struct TextStream
 {
@@ -2434,15 +2435,15 @@ struct ByLine(Char)
 {
     private
     {
-        TextInput input;
+        TextStream *input;
         const(Char)[] line;
         Char terminator;
         KeepTerminator keepTerminator;
     }
 
-    this(TextInput f, KeepTerminator kt = KeepTerminator.no, Char terminator = '\n')
+    this(ref TextStream f, KeepTerminator kt = KeepTerminator.no, Char terminator = '\n')
     {
-        this.input = f;
+        this.input = &f;
         this.terminator = terminator;
         keepTerminator = kt;
         popFront();
