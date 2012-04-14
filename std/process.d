@@ -4,31 +4,32 @@
 
     This is a summary of the functions in this module:
     $(UL $(LI
-        $(D spawnProcess()) spawns a new _process, optionally assigning it an
+        $(LREF spawnProcess) spawns a new _process, optionally assigning it an
         arbitrary set of standard input, output, and error streams.
-        It returns immediately, leaving the child _process to execute in
-        parallel with its parent.  All other functions in this module that
-        spawn processes are built around $(D spawnProcess()).)
+        The function returns immediately, leaving the child _process to execute
+        in parallel with its parent.  All other functions in this module that
+        spawn processes are built around $(LREF spawnProcess).)
     $(LI
-        $(D wait()) makes the parent _process wait for a child _process to
+        $(LREF wait) makes the parent _process wait for a child _process to
         terminate.  In general one should always do this, to avoid
         child _processes becoming "zombies" when the parent _process exits.
-        Scope guards are perfect for this – see the $(D spawnProcess())
+        Scope guards are perfect for this – see the $(LREF spawnProcess)
         documentation for examples.)
     $(LI
-        $(D pipeProcess()) and $(D pipeShell()) also spawn a child _process which
-        runs in parallel with its parent.  However, instead of taking
+        $(LREF pipeProcess) and $(LREF pipeShell) also spawn a child _process
+        which runs in parallel with its parent.  However, instead of taking
         arbitrary streams, they automatically create a set of
         pipes that allow the parent to communicate with the child
         through the child's standard input, output, and/or error streams.
-        These functions correspond roughly to C's $(D popen()) function.)
+        These functions correspond roughly to C's $(D popen) function.)
     $(LI
-        $(D execute()) and $(D shell()) start a new _process and wait for it
+        $(LREF execute) and $(LREF shell) start a new _process and wait for it
         to complete before returning.  Additionally, they capture
-        the _process' standard output and return it as a string.
-        These correspond roughly to C's $(D system()) function.
-    ))
-    The functions that have names containing "shell" run the given command
+        the _process' standard output and error streams and return
+        the output of these as a string.
+        These correspond roughly to C's $(D system) function.)
+    )
+    $(LREF shell) and $(LREF pipeShell) both run the given command
     through the user's default command interpreter.  On Windows, this is
     the $(I cmd.exe) program, on POSIX it is determined by the SHELL environment
     variable (defaulting to $(I /bin/sh) if it cannot be determined).  The
@@ -41,7 +42,7 @@
     strings.  Use the latter whenever the program name or any of the arguments
     contain spaces.
 
-    Unless the program name contains a directory, all functions will
+    Unless a directory is specified in the program name, all functions will
     search for the executable in the directories specified in the PATH
     environment variable.
 
@@ -56,7 +57,6 @@ version(Posix)
     import core.stdc.errno;
     import core.stdc.string;
     import core.sys.posix.stdio;
-    import core.sys.posix.stdlib;
     import core.sys.posix.unistd;
     import core.sys.posix.sys.wait;
 }
@@ -80,7 +80,7 @@ import std.exception;
 import std.path;
 import std.stdio;
 import std.string;
-//import std.typecons;
+import std.typecons;
 
 
 version(Posix)
@@ -122,44 +122,6 @@ else version(Windows)
 /** A handle corresponding to a spawned process. */
 final class Pid
 {
-private:
-
-    // Special values for _processID.
-    enum invalid = -1, terminated = -2;
-
-    // OS process ID number.  Only nonnegative IDs correspond to
-    // running processes.
-    int _processID = invalid;
-
-
-    // Exit code cached by wait().  This is only expected to hold a
-    // sensible value if _processID == terminated.
-    int _exitCode;
-
-
-    // Pids are only meant to be constructed inside this module, so
-    // we make the constructor private.
-    version(Windows)
-    {
-        HANDLE _handle;
-        this(int pid, HANDLE handle)
-        {
-            _processID = pid;
-            _handle = handle;
-        }
-    }
-    else
-    {
-        this(int id)
-        {
-            _processID = id;
-        }
-    }
-
-
-
-public:
-
     /** The ID number assigned to the process by the operating
         system.
     */
@@ -230,19 +192,55 @@ public:
             }
         }
     }
+
+
+private:
+
+    // Special values for _processID.
+    enum invalid = -1, terminated = -2;
+
+    // OS process ID number.  Only nonnegative IDs correspond to
+    // running processes.
+    int _processID = invalid;
+
+
+    // Exit code cached by wait().  This is only expected to hold a
+    // sensible value if _processID == terminated.
+    int _exitCode;
+
+
+    // Pids are only meant to be constructed inside this module, so
+    // we make the constructor private.
+    version(Windows)
+    {
+        HANDLE _handle;
+        this(int pid, HANDLE handle)
+        {
+            _processID = pid;
+            _handle = handle;
+        }
+    }
+    else
+    {
+        this(int id)
+        {
+            _processID = id;
+        }
+    }
 }
 
 
 
 
-/** Spawn a new process.
+/** Spawns a new process.
 
     This function returns immediately, and the child process
     executes in parallel with its parent.
 
     Unless a directory is specified in the $(D _command) (or $(D name))
     parameter, this function will search the directories in the
-    PATH environment variable for the program.
+    PATH environment variable for the program.  To run an executable in
+    the current directory, use $(D "./$(I executable_name)").
 
     Params:
         command = A string containing the program name and
@@ -257,33 +255,34 @@ public:
             same environment as the parent process.
 
         stdin_ = The standard input stream of the child process.
-            This can be any $(D File) that is opened for reading.
+            This can be any $(XREF stdio,File) that is opened for reading.
             By default the child process inherits the parent's input
             stream.
 
         stdout_ = The standard output stream of the child process.
-            This can be any $(D File) that is opened for writing.
+            This can be any $(XREF stdio,File) that is opened for writing.
             By default the child process inherits the parent's output
             stream.
 
         stderr_ = The standard error stream of the child process.
-            This can be any $(D File) that is opened for writing.
+            This can be any $(XREF stdio,File) that is opened for writing.
             By default the child process inherits the parent's error
             stream.
 
-        config = Options controlling the behaviour of spawnProcess().
+        config = Options controlling the behaviour of $(D spawnProcess).
+            See the $(LREF Config) documentation for details.
 
         name = The name of the executable file.
 
         args = The _command line arguments to give to the program.
             (There is no need to specify the program name as the
-            zeroth argument, this is done automatically.)
+            zeroth argument; this is done automatically.)
 
     Note:
-    If you pass a $(D File) object that is $(I not) one of the standard
+    If you pass an $(XREF stdio,File) object that is $(I not) one of the standard
     input/output/error streams of the parent process, that stream
     will by default be closed in the parent process when this
-    function returns.  See the $(D Config) documentation below for information
+    function returns.  See the $(LREF Config) documentation below for information
     about how to disable this behaviour.
 
     Examples:
@@ -295,30 +294,30 @@ public:
     Use the $(I ls) _command to retrieve a list of files:
     ---
     string[] files;
-    auto pipe = Pipe.create();
+    auto p = pipe();
 
-    auto pid = spawnProcess("ls", stdin, pipe.writeEnd);
+    auto pid = spawnProcess("ls", stdin, p.writeEnd);
     scope(exit) wait(pid);
 
-    foreach (f; pipe.readEnd.byLine())  files ~= f.idup;
+    foreach (f; p.readEnd.byLine())  files ~= f.idup;
     ---
     Use the $(I ls -l) _command to get a list of files, pipe the output
     to $(I grep) and let it filter out all files except D source files,
-    and write the output to the file "dfiles.txt":
+    and write the output to the file $(I dfiles.txt):
     ---
     // Let's emulate the command "ls -l | grep \.d > dfiles.txt"
-    auto pipe = Pipe.create();
+    auto p = pipe();
     auto file = File("dfiles.txt", "w");
 
-    auto lsPid = spawnProcess("ls -l", stdin, pipe.writeEnd);
+    auto lsPid = spawnProcess("ls -l", stdin, p.writeEnd);
     scope(exit) wait(lsPid);
 
-    auto grPid = spawnProcess("grep \\.d", pipe.readEnd, file);
+    auto grPid = spawnProcess("grep \\.d", p.readEnd, file);
     scope(exit) wait(grPid);
     ---
     Open a set of files in OpenOffice Writer, and make it print
     any error messages to the standard output stream.  Note that since
-    the filenames contain spaces, we must specify them as an array:
+    the filenames contain spaces, we have to pass them in an array:
     ---
     spawnProcess("oowriter", ["my document.odt", "your document.odt"],
         stdin, stdout, stdout);
@@ -384,15 +383,14 @@ version(Posix) private Pid spawnProcessImpl
     File stdin_, File stdout_, File stderr_, Config config)
 {
     // Make sure the file exists and is executable.
-    if (std.string.indexOf(name, std.path.sep) == -1)
+    if (any!isDirSeparator(name))
     {
-        name = searchPathFor(name);
-        enforce(name != null, "Executable file not found: "~name);
+        enforce(isExecutable(name), "Not an executable file: "~name);
     }
     else
     {
-        enforce(name != null  &&  isExecutable(name),
-            "Executable file not found: "~name);
+        name = searchPathFor(name);
+        enforce(name != null, "Executable file not found: "~name);
     }
 
     // Get the file descriptors of the streams.
@@ -571,7 +569,7 @@ else version(Windows) private Pid spawnProcessImpl
     return new Pid(pi.dwProcessId, pi.hProcess);
 }
 
-// Search the PATH variable for the given executable file,
+// Searches the PATH variable for the given executable file,
 // (checking that it is in fact executable).
 version(Posix) private string searchPathFor(string executable)
 {
@@ -587,7 +585,7 @@ version(Posix) private string searchPathFor(string executable)
     return null;
 }
 
-// Convert a C array of C strings to a string[] array,
+// Converts a C array of C strings to a string[] array,
 // setting the program name as the zeroth element.
 version(Posix) private const(char)** toArgz(string prog, const string[] args)
 {
@@ -603,7 +601,7 @@ version(Posix) private const(char)** toArgz(string prog, const string[] args)
     return argz.ptr;
 }
 
-// Convert a string[string] array to a C array of C strings
+// Converts a string[string] array to a C array of C strings
 // on the form "key=value".
 version(Posix) private const(char)** toEnvz(const string[string] env)
 {
@@ -638,7 +636,7 @@ else version(Windows) private LPVOID toEnvz(const string[string] env)
 }
 
 
-// Check whether the file exists and can be executed by the
+// Checks whether the file exists and can be executed by the
 // current user.
 version(Posix) private bool isExecutable(string path)
 {
@@ -648,7 +646,7 @@ version(Posix) private bool isExecutable(string path)
 
 
 
-/** Flags that control the behaviour of $(D spawnProcess()).
+/** Flags that control the behaviour of $(LREF spawnProcess).
     Use bitwise OR to combine flags.
 
     Example:
@@ -675,7 +673,7 @@ enum Config
     /** Unless the child process inherits the standard
         input/output/error streams of its parent, one almost
         always wants the streams closed in the parent when
-        $(D spawnProcess()) returns.  Therefore, by default, this
+        $(LREF spawnProcess) returns.  Therefore, by default, this
         is done.  If this is not desirable, pass any of these
         options to spawnProcess.
     */
@@ -684,7 +682,7 @@ enum Config
     noCloseStderr = 4,                                  /// ditto
 
     /** On Windows, this option causes the process to run in
-        a graphical console.  On POSIX it has no effect.
+        a console window.  On POSIX it has no effect.
     */
     gui = 8,
 }
@@ -692,20 +690,22 @@ enum Config
 
 
 
-/** Wait for a specific spawned process to terminate and return
-    its exit status.  See the $(D spawnProcess()) documentation above
-    for examples of usage.
+/** Waits for a specific spawned process to terminate and returns
+    its exit status.
 
     In general one should always _wait for child processes to terminate
     before exiting the parent process.  Otherwise, they may become
-    "zombies" – processes that are defunct, yet still occupy a slot
-    in the OS process table.
+    "$(WEB en.wikipedia.org/wiki/Zombie_process,zombies)" – processes
+    that are defunct, yet still occupy a slot in the OS process table.
 
     Note:
     On POSIX systems, if the process is terminated by a signal,
     this function returns a negative number whose absolute value
     is the signal number.  (POSIX restricts normal exit codes
     to the range 0-255.)
+
+    Examples:
+    See the $(LREF spawnProcess) documentation.
 */
 int wait(Pid pid)
 {
@@ -716,25 +716,103 @@ int wait(Pid pid)
 
 
 
-/** A unidirectional pipe.  Data is written to one end of the pipe
-    and read from the other.
+/** Creates a unidirectional _pipe.
+
+    Data is written to one end of the _pipe and read from the other.
     ---
-    auto p = Pipe.create();
+    auto p = pipe();
     p.writeEnd.writeln("Hello World");
     assert (p.readEnd.readln().chomp() == "Hello World");
     ---
     Pipes can, for example, be used for interprocess communication
-    by spawning a new process and passing one end of the pipe to
+    by spawning a new process and passing one end of the _pipe to
     the child, while the parent uses the other end.  See the
-    $(D spawnProcess()) documentation for examples of this.
+    $(LREF spawnProcess) documentation for examples of this.
 */
+version(Posix) Pipe pipe()
+{
+    int[2] fds;
+    errnoEnforce(core.sys.posix.unistd.pipe(fds) == 0,
+                 "Unable to create pipe");
+
+    Pipe p;
+
+    // TODO: Using the internals of File like this feels like a hack,
+    // but the File.wrapFile() function disables automatic closing of
+    // the file.  Perhaps there should be a protected version of
+    // wrapFile() that fills this purpose?
+    p._read.p = new File.Impl(
+        errnoEnforce(fdopen(fds[0], "r"), "Cannot open read end of pipe"),
+        1, null);
+    p._write.p = new File.Impl(
+        errnoEnforce(fdopen(fds[1], "w"), "Cannot open write end of pipe"),
+        1, null);
+
+    return p;
+}
+else version(Windows) Pipe pipe()
+{
+    // use CreatePipe to create an anonymous pipe
+    HANDLE readHandle;
+    HANDLE writeHandle;
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sa.sizeof;
+    sa.lpSecurityDescriptor = null;
+    sa.bInheritHandle = true;
+    if(!CreatePipe(&readHandle, &writeHandle, &sa, 0))
+    {
+        throw new Exception("Error creating pipe: " ~ sysErrorString(GetLastError()), __FILE__, __LINE__);
+    }
+
+    // Create file descriptors from the handles
+    auto readfd = _handleToFD(readHandle, FHND_DEVICE);
+    auto writefd = _handleToFD(writeHandle, FHND_DEVICE);
+
+    Pipe p;
+    version(PIPE_USE_ALT_FDOPEN)
+    {
+        // This is a re-implementation of DMC's fdopen, but without the
+        // mucking with the file descriptor.  POSIX standard requires the
+        // new fdopen'd file to retain the given file descriptor's
+        // position.
+        FILE * local_fdopen(int fd, const(char)* mode)
+        {
+            auto fp = core.stdc.stdio.fopen("NUL", mode);
+            if(!fp)
+                return null;
+            FLOCK(fp);
+            auto iob = cast(_iobuf*)fp;
+            .close(iob._file);
+            iob._file = fd;
+            iob._flag &= ~_IOTRAN;
+            FUNLOCK(fp);
+            return fp;
+        }
+
+        p._read.p = new File.Impl(
+            errnoEnforce(local_fdopen(readfd, "r"), "Cannot open read end of pipe"),
+            1, null);
+        p._write.p = new File.Impl(
+            errnoEnforce(local_fdopen(writefd, "a"), "Cannot open write end of pipe"),
+            1, null);
+    }
+    else
+    {
+        p._read.p = new File.Impl(
+            errnoEnforce(fdopen(readfd, "r"), "Cannot open read end of pipe"),
+            1, null);
+        p._write.p = new File.Impl(
+            errnoEnforce(fdopen(writefd, "a"), "Cannot open write end of pipe"),
+            1, null);
+    }
+
+    return p;
+}
+
+
+/// ditto
 struct Pipe
 {
-private:
-    File _read, _write;
-
-
-public:
     /** The read end of the pipe. */
     @property File readEnd() { return _read; }
 
@@ -743,91 +821,9 @@ public:
     @property File writeEnd() { return _write; }
 
 
-    /** Create a new pipe. */
-    version(Posix) static Pipe create()
-    {
-        int[2] fds;
-        errnoEnforce(pipe(fds) == 0, "Unable to create pipe");
+    /** Closes both ends of the pipe.
 
-        Pipe p;
-
-        // TODO: Using the internals of File like this feels like a hack,
-        // but the File.wrapFile() function disables automatic closing of
-        // the file.  Perhaps there should be a protected version of
-        // wrapFile() that fills this purpose?
-        p._read.p = new File.Impl(
-            errnoEnforce(fdopen(fds[0], "r"), "Cannot open read end of pipe"),
-            1, null);
-        p._write.p = new File.Impl(
-            errnoEnforce(fdopen(fds[1], "w"), "Cannot open write end of pipe"),
-            1, null);
-
-        return p;
-    }
-    else version(Windows) static Pipe create()
-    {
-        // use CreatePipe to create an anonymous pipe
-        HANDLE readHandle;
-        HANDLE writeHandle;
-        SECURITY_ATTRIBUTES sa;
-        sa.nLength = sa.sizeof;
-        sa.lpSecurityDescriptor = null;
-        sa.bInheritHandle = true;
-        if(!CreatePipe(&readHandle, &writeHandle, &sa, 0))
-        {
-            throw new Exception("Error creating pipe: " ~ sysErrorString(GetLastError()), __FILE__, __LINE__);
-        }
-
-        // Create file descriptors from the handles
-        auto readfd = _handleToFD(readHandle, FHND_DEVICE);
-        auto writefd = _handleToFD(writeHandle, FHND_DEVICE);
-
-        Pipe p;
-        version(PIPE_USE_ALT_FDOPEN)
-        {
-            // This is a re-implementation of DMC's fdopen, but without the
-            // mucking with the file descriptor.  POSIX standard requires the
-            // new fdopen'd file to retain the given file descriptor's
-            // position.
-            FILE * local_fdopen(int fd, const(char)* mode)
-            {
-                auto fp = core.stdc.stdio.fopen("NUL", mode);
-                if(!fp)
-                    return null;
-                FLOCK(fp);
-                auto iob = cast(_iobuf*)fp;
-                .close(iob._file);
-                iob._file = fd;
-                iob._flag &= ~_IOTRAN;
-                FUNLOCK(fp);
-                return fp;
-            }
-
-            p._read.p = new File.Impl(
-                errnoEnforce(local_fdopen(readfd, "r"), "Cannot open read end of pipe"),
-                1, null);
-            p._write.p = new File.Impl(
-                errnoEnforce(local_fdopen(writefd, "a"), "Cannot open write end of pipe"),
-                1, null);
-        }
-        else
-        {
-            p._read.p = new File.Impl(
-                errnoEnforce(fdopen(readfd, "r"), "Cannot open read end of pipe"),
-                1, null);
-            p._write.p = new File.Impl(
-                errnoEnforce(fdopen(writefd, "a"), "Cannot open write end of pipe"),
-                1, null);
-        }
-
-        return p;
-    }
-
-
-
-    /** Close both ends of the pipe.
-
-        Normally it is not necessary to do this manually, as $(D File)
+        Normally it is not necessary to do this manually, as $(XREF stdio,File)
         objects are automatically closed when there are no more references
         to them.
 
@@ -839,11 +835,16 @@ public:
         _read.close();
         _write.close();
     }
+
+
+private:
+    File _read, _write;
 }
+
 
 unittest
 {
-    auto p = Pipe.create();
+    auto p = pipe();
     p.writeEnd.writeln("Hello World");
     assert (p.readEnd.readln().chomp() == "Hello World");
 }
@@ -854,12 +855,12 @@ unittest
 // ============================== pipeProcess() ==============================
 
 
-/** Start a new process, and create pipes to redirect its standard
-    input, output and/or error streams.  This function returns
-    immediately, leaving the child process to execute in parallel
-    with the parent.
+/** Starts a new process, creating pipes to redirect its standard
+    input, output and/or error streams.
 
-    $(D pipeShell()) invokes the user's _command interpreter
+    These functions return immediately, leaving the child process to
+    execute in parallel with the parent.
+    $(LREF pipeShell) invokes the user's _command interpreter
     to execute the given program or _command.
 
     Example:
@@ -894,7 +895,7 @@ ProcessPipes pipeProcess(string name, string[] args,
 
     if (redirectFlags & Redirect.stdin)
     {
-        auto p = Pipe.create();
+        auto p = pipe();
         stdinFile = p.readEnd;
         pipes._stdin = p.writeEnd;
     }
@@ -908,7 +909,7 @@ ProcessPipes pipeProcess(string name, string[] args,
         enforce((redirectFlags & Redirect.stdoutToStderr) == 0,
             "Invalid combination of options: Redirect.stdout | "
            ~"Redirect.stdoutToStderr");
-        auto p = Pipe.create();
+        auto p = pipe();
         stdoutFile = p.writeEnd;
         pipes._stdout = p.readEnd;
     }
@@ -922,7 +923,7 @@ ProcessPipes pipeProcess(string name, string[] args,
         enforce((redirectFlags & Redirect.stderrToStdout) == 0,
             "Invalid combination of options: Redirect.stderr | "
            ~"Redirect.stderrToStdout");
-        auto p = Pipe.create();
+        auto p = pipe();
         stderrFile = p.writeEnd;
         pipes._stderr = p.readEnd;
     }
@@ -964,7 +965,7 @@ ProcessPipes pipeShell(string command, Redirect redirectFlags = Redirect.all)
 
 
 
-/** Flags that can be passed to $(D pipeProcess()) and $(D pipeShell())
+/** Flags that can be passed to $(LREF pipeProcess) and $(LREF pipeShell)
     to specify which of the child process' standard streams are redirected.
     Use bitwise OR to combine flags.
 */
@@ -988,18 +989,12 @@ enum Redirect
 
 
 
-/** Object containing $(D File) handles that allow communication with
+/** Object containing $(XREF stdio,File) handles that allow communication with
     a child process through its standard streams.
 */
 struct ProcessPipes
 {
-private:
-    Redirect _redirectFlags;
-    Pid _pid;
-    File _stdin, _stdout, _stderr;
-
-public:
-    /** Return the $(D Pid) of the child process. */
+    /** Returns the $(LREF Pid) of the child process. */
     @property Pid pid()
     {
         enforce (_pid !is null);
@@ -1007,7 +1002,7 @@ public:
     }
 
 
-    /** Return a $(D File) that allows writing to the child process'
+    /** Returns an $(XREF stdio,File) that allows writing to the child process'
         standard input stream.
     */
     @property File stdin()
@@ -1018,8 +1013,8 @@ public:
     }
 
 
-    /** Return a $(D File) that allows reading from the child process'
-        standard output/error stream.
+    /** Returns an $(XREF stdio,File) that allows reading from the child
+        process' standard output/error stream.
     */
     @property File stdout()
     {
@@ -1035,6 +1030,13 @@ public:
             "Child process' standard error stream hasn't been redirected.");
         return _stderr;
     }
+
+
+private:
+
+    Redirect _redirectFlags;
+    Pid _pid;
+    File _stdin, _stdout, _stderr;
 }
 
 
@@ -1043,20 +1045,17 @@ public:
 // ============================== execute() ==============================
 
 
-struct ProcessResult { int status; string output; }
+/** Executes the given program and returns its exit code and output.
 
-/** Execute the given program.
-
-    This function blocks until the program returns, and returns
-    its exit code and output (what it writes to its
-    standard output $(I and) error streams).
+    This function blocks until the program terminates.
+    The $(D output) string includes what the program writes to its
+    standard error stream as well as its standard output stream.
     ---
     auto dmd = execute("dmd myapp.d");
     if (dmd.status != 0) writeln("Compilation failed:\n", dmd.output);
     ---
 */
-/*Tuple!(int, "status", string, "output")*/
-ProcessResult execute(string command)
+Tuple!(int, "status", string, "output") execute(string command)
 {
     auto p = pipeProcess(command,
         Redirect.stdout | Redirect.stderrToStdout);
@@ -1072,8 +1071,7 @@ ProcessResult execute(string command)
 
 
 /// ditto
-/*Tuple!(int, "status", string, "output")*/
-ProcessResult execute(string name, string[] args...)
+Tuple!(int, "status", string, "output") execute(string name, string[] args...)
 {
     auto p = pipeProcess(name, args,
         Redirect.stdout | Redirect.stderrToStdout);
@@ -1097,7 +1095,7 @@ version(Posix)   private immutable string shellSwitch = "-c";
 version(Windows) private immutable string shellSwitch = "/C";
 
 
-// Get the user's default shell.
+// Gets the user's default shell.
 version(Posix)  private string getShell()
 {
     return environment.get("SHELL", "/bin/sh");
@@ -1111,17 +1109,18 @@ version(Windows) private string getShell()
 
 
 
-/** Execute $(D _command) in the user's default _shell.
-    This function blocks until the _command returns, and returns
-    its exit code and output (what the process writes to its
-    standard output $(I and) error streams).
+/** Executes $(D _command) in the user's default _shell and returns its
+    exit code and output.
+
+    This function blocks until the command terminates.
+    The $(D output) string includes what the command writes to its
+    standard error stream as well as its standard output stream.
     ---
     auto ls = shell("ls -l");
     writefln("ls exited with code %s and said: %s", ls.status, ls.output);
     ---
 */
-/*Tuple!(int, "status", string, "output")*/
-ProcessResult shell(string command)
+Tuple!(int, "status", string, "output") shell(string command)
 {
     version(Windows)
         return execute(getShell() ~ " " ~ shellSwitch ~ " " ~ command);
@@ -1136,7 +1135,7 @@ ProcessResult shell(string command)
 // ============================== thisProcessID ==============================
 
 
-/** Get the process ID number of the current process. */
+/** Returns the process ID number of the current process. */
 version(Posix) @property int thisProcessID()
 {
     return getpid();
@@ -1159,7 +1158,7 @@ version(Windows) @property int thisProcessID()
     Examples:
     ---
     // Return variable, or throw an exception if it doesn't exist.
-    auto path = environment["PATH"];
+    string path = environment["PATH"];
 
     // Add/replace variable.
     environment["foo"] = "bar";
@@ -1168,14 +1167,13 @@ version(Windows) @property int thisProcessID()
     environment.remove("foo");
 
     // Return variable, or null if it doesn't exist.
-    auto foo = environment.get("foo");
+    string foo = environment.get("foo");
 
     // Return variable, or a default value if it doesn't exist.
-    auto foo = environment.get("foo", "default foo value");
+    string foo = environment.get("foo", "default foo value");
 
-    // Return an associative array of type string[string] containing
-    // all the environment variables.
-    auto aa = environment.toAA();
+    // Return an associative array containing all the environment variables.
+    string[string] aa = environment.toAA();
     ---
 */
 alias Environment environment;
@@ -1191,54 +1189,11 @@ abstract final class Environment
             environ = * _NSGetEnviron();
         }
     }
+
+
 static:
 
-private:
-    // Return the length of an environment variable (in number of
-    // wchars, including the null terminator), 0 if it doesn't exist.
-    version(Windows)
-    int varLength(LPCWSTR namez)
-    {
-        return GetEnvironmentVariableW(namez, null, 0);
-    }
-
-
-    // Retrieve the environment variable, or return false on failure.
-    bool getImpl(string name, out string value)
-    {
-        version(Posix)
-        {
-            const vz = core.sys.posix.stdlib.getenv(toStringz(name));
-            if (vz == null) return false;
-            auto v = vz[0 .. strlen(vz)];
-
-            // Cache the last call's result.
-            static string lastResult;
-            if (v != lastResult) lastResult = v.idup;
-            value = lastResult;
-            return true;
-        }
-
-        else version(Windows)
-        {
-            const namez = toUTF16z(name);
-            immutable len = varLength(namez);
-            if (len == 0) return false;
-            if (len == 1) return true;
-
-            auto buf = new WCHAR[len];
-            GetEnvironmentVariableW(namez, buf.ptr, buf.length);
-            value = toUTF8(buf[0 .. $-1]);
-            return true;
-        }
-
-        else static assert(0);
-    }
-
-
-
-public:
-    // Retrieve an environment variable, throw on failure.
+    // Retrieves an environment variable, throws on failure.
     string opIndex(string name)
     {
         string value;
@@ -1248,7 +1203,7 @@ public:
 
 
 
-    // Assign a value to an environment variable.  If the variable
+    // Assigns a value to an environment variable.  If the variable
     // exists, it is overwritten.
     string opIndexAssign(string value, string name)
     {
@@ -1283,7 +1238,7 @@ public:
 
 
 
-    // Remove an environment variable.  The function succeeds even
+    // Removes an environment variable.  The function succeeds even
     // if the variable isn't in the environment.
     void remove(string name)
     {
@@ -1302,7 +1257,7 @@ public:
 
 
 
-    // Same as opIndex, except return a default value if
+    // Same as opIndex, except it returns a default value if
     // the variable doesn't exist.
     string get(string name, string defaultValue = null)
     {
@@ -1313,7 +1268,7 @@ public:
 
 
 
-    // Return all environment variables in an associative array.
+    // Returns all environment variables in an associative array.
     string[string] toAA()
     {
         string[string] aa;
@@ -1365,6 +1320,49 @@ public:
         return aa;
     }
 
+
+private:
+
+    // Returns the length of an environment variable (in number of
+    // wchars, including the null terminator), or 0 if it doesn't exist.
+    version(Windows)
+    int varLength(LPCWSTR namez)
+    {
+        return GetEnvironmentVariableW(namez, null, 0);
+    }
+
+
+    // Retrieves the environment variable, returns false on failure.
+    bool getImpl(string name, out string value)
+    {
+        version(Posix)
+        {
+            const vz = core.sys.posix.stdlib.getenv(toStringz(name));
+            if (vz == null) return false;
+            auto v = vz[0 .. strlen(vz)];
+
+            // Cache the last call's result.
+            static string lastResult;
+            if (v != lastResult) lastResult = v.idup;
+            value = lastResult;
+            return true;
+        }
+
+        else version(Windows)
+        {
+            const namez = toUTF16z(name);
+            immutable len = varLength(namez);
+            if (len == 0) return false;
+            if (len == 1) return true;
+
+            auto buf = new WCHAR[len];
+            GetEnvironmentVariableW(namez, buf.ptr, buf.length);
+            value = toUTF8(buf[0 .. $-1]);
+            return true;
+        }
+
+        else static assert(0);
+    }
 }
 
 
