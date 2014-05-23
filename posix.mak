@@ -188,6 +188,8 @@ STD_NET_MODULES = $(addprefix std/net/, isemail curl)
 
 STD_DIGEST_MODULES = $(addprefix std/digest/, digest crc md ripemd sha)
 
+STD_DIGEST_MODULES = $(addprefix std/io/, buffer textbuf stream traits package)
+
 # OS-specific D modules
 EXTRA_MODULES_LINUX := $(addprefix std/c/linux/, linux socket)
 EXTRA_MODULES_OSX := $(addprefix std/c/osx/, socket)
@@ -213,7 +215,7 @@ EXTRA_MODULES += $(EXTRA_DOCUMENTABLES) $(addprefix			\
 
 # Aggregate all D modules relevant to this build
 D_MODULES = $(STD_MODULES) $(EXTRA_MODULES) $(STD_NET_MODULES) \
-    $(STD_DIGEST_MODULES)
+    $(STD_DIGEST_MODULES) $(STD_IO_MODULES)
 # Add the .d suffix to the module names
 D_FILES = $(addsuffix .d,$(D_MODULES))
 # Aggregate all D modules over all OSs (this is for the zip file)
