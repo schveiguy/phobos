@@ -39,7 +39,7 @@ WIKI = Phobos/StdRandom
 
 
 Copyright: Copyright Andrei Alexandrescu 2008 - 2009, Joseph Rushton Wakeling 2012.
-License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
+License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 Authors:   $(WEB erdani.org, Andrei Alexandrescu)
            Masahiro Nakagawa (Xorshift randome generator)
            $(WEB braingam.es, Joseph Rushton Wakeling) (Algorithm D for random sampling)
@@ -56,9 +56,9 @@ Distributed under the Boost Software License, Version 1.0.
 */
 module std.random;
 
-import std.algorithm, std.c.time, std.conv, std.exception,
+import std.algorithm, std.conv, std.exception,
        std.math, std.numeric, std.range, std.traits,
-       core.thread, core.time;
+       core.stdc.time, core.thread, core.time;
 import std.string : format;
 
 version(unittest) import std.typetuple;
@@ -1114,7 +1114,7 @@ auto n = rnd.front;
 ----
 */
 
-@property uint unpredictableSeed()
+@property uint unpredictableSeed() @trusted
 {
     static bool seeded;
     static MinstdRand0 rand;
@@ -1128,7 +1128,7 @@ auto n = rnd.front;
     return cast(uint) (TickDuration.currSystemTick.length ^ rand.front);
 }
 
-unittest
+@safe unittest
 {
     // not much to test here
     auto a = unpredictableSeed;
@@ -1158,7 +1158,7 @@ Global random number generator used by various functions in this
 module whenever no generator is specified. It is allocated per-thread
 and initialized to an unpredictable value for each thread.
  */
-@property ref Random rndGen()
+@property ref Random rndGen() @safe
 {
     static Random result;
     static bool initialized;
@@ -1197,7 +1197,7 @@ auto uniform(string boundaries = "[)", T1, T2)
     return uniform!(boundaries, T1, T2, Random)(a, b, rndGen);
 }
 
-unittest
+@safe unittest
 {
     MinstdRand0 gen;
     foreach (i; 0 .. 20)
@@ -1333,7 +1333,7 @@ if ((isIntegral!(CommonType!(T1, T2)) || isSomeChar!(CommonType!(T1, T2))) &&
     {
         enforce(a < ResultType.max,
                 text("std.random.uniform(): invalid left bound ", a));
-        ResultType lower = a + 1;
+        ResultType lower = cast(ResultType) (a + 1);
     }
     else
     {
@@ -1345,10 +1345,16 @@ if ((isIntegral!(CommonType!(T1, T2)) || isSomeChar!(CommonType!(T1, T2))) &&
         enforce(lower <= b,
                 text("std.random.uniform(): invalid bounding interval ",
                         boundaries[0], a, ", ", b, boundaries[1]));
-        if (b == ResultType.max && lower == ResultType.min)
+        /* Cannot use this next optimization with dchar, as dchar
+         * only partially uses its full bit range
+         */
+        static if (!is(ResultType == dchar))
         {
-            // Special case - all bits are occupied
-            return std.random.uniform!ResultType(rng);
+            if (b == ResultType.max && lower == ResultType.min)
+            {
+                // Special case - all bits are occupied
+                return std.random.uniform!ResultType(rng);
+            }
         }
         auto upperDist = unsigned(b - lower) + 1u;
     }
@@ -1377,7 +1383,7 @@ if ((isIntegral!(CommonType!(T1, T2)) || isSomeChar!(CommonType!(T1, T2))) &&
     return cast(ResultType)(lower + offset);
 }
 
-unittest
+@safe unittest
 {
     auto gen = Mt19937(unpredictableSeed);
     static assert(isForwardRange!(typeof(gen)));
@@ -1393,10 +1399,52 @@ unittest
                           int, uint, long, ulong, float, double, real))
     {
         T lo = 0, hi = 100;
-        T init = uniform(lo, hi);
-        size_t i = 50;
-        while (--i && uniform(lo, hi) == init) {}
-        assert(i > 0);
+
+        // Try tests with each of the possible bounds
+        {
+            T init = uniform(lo, hi);
+            size_t i = 50;
+            while (--i && uniform(lo, hi) == init) {}
+            assert(i > 0);
+        }
+        {
+            T init = uniform!"[)"(lo, hi);
+            size_t i = 50;
+            while (--i && uniform(lo, hi) == init) {}
+            assert(i > 0);
+        }
+        {
+            T init = uniform!"(]"(lo, hi);
+            size_t i = 50;
+            while (--i && uniform(lo, hi) == init) {}
+            assert(i > 0);
+        }
+        {
+            T init = uniform!"()"(lo, hi);
+            size_t i = 50;
+            while (--i && uniform(lo, hi) == init) {}
+            assert(i > 0);
+        }
+        {
+            T init = uniform!"[]"(lo, hi);
+            size_t i = 50;
+            while (--i && uniform(lo, hi) == init) {}
+            assert(i > 0);
+        }
+
+        /* Test case with closed boundaries covering whole range
+         * of integral type
+         */
+        static if (isIntegral!T || isSomeChar!T)
+        {
+            foreach (immutable _; 0 .. 100)
+            {
+                auto u = uniform!"[]"(T.min, T.max);
+                static assert(is(typeof(u) == T));
+                assert(T.min <= u, "Lower bound violation for uniform!\"[]\" with " ~ T.stringof);
+                assert(u <= T.max, "Upper bound violation for uniform!\"[]\" with " ~ T.stringof);
+            }
+        }
     }
 
     auto reproRng = Xorshift(239842);
@@ -1478,18 +1526,28 @@ auto uniform(T, UniformRandomNumberGenerator)
 (ref UniformRandomNumberGenerator urng)
 if (!is(T == enum) && (isIntegral!T || isSomeChar!T) && isUniformRNG!UniformRandomNumberGenerator)
 {
-    auto r = urng.front;
-    urng.popFront();
-    static if (T.sizeof <= r.sizeof)
+    /* dchar does not use its full bit range, so we must
+     * revert to the uniform with specified bounds
+     */
+    static if (is(T == dchar))
     {
-        return cast(T) r;
+        return uniform!"[]"(T.min, T.max);
     }
     else
     {
-        static assert(T.sizeof == 8 && r.sizeof == 4);
-        T r1 = urng.front | (cast(T)r << 32);
+        auto r = urng.front;
         urng.popFront();
-        return r1;
+        static if (T.sizeof <= r.sizeof)
+        {
+            return cast(T) r;
+        }
+        else
+        {
+            static assert(T.sizeof == 8 && r.sizeof == 4);
+            T r1 = urng.front | (cast(T)r << 32);
+            urng.popFront();
+            return r1;
+        }
     }
 }
 
@@ -1500,7 +1558,7 @@ if (!is(T == enum) && (isIntegral!T || isSomeChar!T))
     return uniform!T(rndGen);
 }
 
-unittest
+@safe unittest
 {
     foreach(T; TypeTuple!(char, wchar, dchar, byte, ubyte, short, ushort,
                           int, uint, long, ulong))
@@ -1509,6 +1567,14 @@ unittest
         size_t i = 50;
         while (--i && uniform!T() == init) {}
         assert(i > 0);
+
+        foreach (immutable _; 0 .. 100)
+        {
+            auto u = uniform!T();
+            static assert(is(typeof(u) == T));
+            assert(T.min <= u, "Lower bound violation for uniform!" ~ T.stringof);
+            assert(u <= T.max, "Upper bound violation for uniform!" ~ T.stringof);
+        }
     }
 }
 
@@ -1532,13 +1598,13 @@ if (is(E == enum))
 }
 
 ///
-unittest
+@safe unittest
 {
     enum Fruit { apple, mango, pear }
     auto randFruit = uniform!Fruit();
 }
 
-unittest
+@safe unittest
 {
     enum Fruit { Apple = 12, Mango = 29, Pear = 72 }
     foreach (_; 0 .. 100)
@@ -1552,12 +1618,12 @@ unittest
 
 /**
  * Generates a uniformly-distributed floating point number of type
- * $(D T) in the range [0, 1).  If no random number generator is
+ * $(D T) in the range [0, 1$(RPAREN).  If no random number generator is
  * specified, the default RNG $(D rndGen) will be used as the source
  * of randomness.
  *
  * $(D uniform01) offers a faster generation of random variates than
- * the equivalent $(D uniform!"[)"(0.0, 1.0)) and so may be preferred
+ * the equivalent $(D uniform!"[$(RPAREN)"(0.0, 1.0)) and so may be preferred
  * for some applications.
  */
 T uniform01(T = double)()
@@ -1618,7 +1684,7 @@ body
     assert(false);
 }
 
-unittest
+@safe unittest
 {
     import std.typetuple;
     foreach (UniformRNG; PseudoRngTypes)
@@ -1670,7 +1736,7 @@ F[] uniformDistribution(F = double)(size_t n, F[] useThis = null)
     return useThis;
 }
 
-unittest
+@safe unittest
 {
     static assert(is(CommonType!(double, int) == double));
     auto a = uniformDistribution(5);
@@ -1709,9 +1775,11 @@ unittest
         auto b = a.dup;
         auto gen = RandomGen(unpredictableSeed);
         randomShuffle(a, gen);
-        assert(a.sort == b);
+        sort(a);
+        assert(a == b);
         randomShuffle(a);
-        assert(a.sort == b);
+        sort(a);
+        assert(a == b);
     }
 }
 
@@ -1732,7 +1800,7 @@ void partialShuffle(Range, RandomGen)(Range r, in size_t n, ref RandomGen gen)
     enforce(n <= r.length, "n must be <= r.length for partialShuffle.");
     foreach (i; 0 .. n)
     {
-        swapAt(r, i, i + uniform(0, n - i, gen));
+        swapAt(r, i, uniform(i, n, gen));
     }
 }
 
@@ -1752,10 +1820,12 @@ unittest
         auto gen = RandomGen(unpredictableSeed);
         partialShuffle(a, 5, gen);
         assert(a[5 .. $] == b[5 .. $]);
-        assert(a[0 .. 5].sort == b[0 .. 5]);
+        sort(a[0 .. 5]);
+        assert(a[0 .. 5] == b[0 .. 5]);
         partialShuffle(a, 6);
         assert(a[6 .. $] == b[6 .. $]);
-        assert(a[0 .. 6].sort == b[0 .. 6]);
+        sort(a[0 .. 6]);
+        assert(a[0 .. 6] == b[0 .. 6]);
     }
 }
 

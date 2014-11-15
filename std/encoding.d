@@ -39,7 +39,7 @@ Macros:
     WIKI=Phobos/StdEncoding
 
 Copyright: Copyright Janice Caron 2008 - 2009.
-License:   <a href="http://www.boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.
+License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 Authors:   Janice Caron
 Source:    $(PHOBOSSRC std/_encoding.d)
 */
@@ -51,9 +51,8 @@ Distributed under the Boost Software License, Version 1.0.
 */
 module std.encoding;
 
-import std.string;
 import std.traits;
-import std.range;
+import std.range.constraints;
 
 unittest
 {
@@ -1750,28 +1749,28 @@ if (isNativeOutputRange!(R, E))
     {
         if (c <= 0x7F)
         {
-            doPut(range, cast(char) c);
+            put(range, cast(char) c);
             return 1;
         }
         if (c <= 0x7FF)
         {
-            doPut(range, cast(char)(0xC0 | (c >> 6)));
-            doPut(range, cast(char)(0x80 | (c & 0x3F)));
+            put(range, cast(char)(0xC0 | (c >> 6)));
+            put(range, cast(char)(0x80 | (c & 0x3F)));
             return 2;
         }
         if (c <= 0xFFFF)
         {
-            doPut(range, cast(char)(0xE0 | (c >> 12)));
-            doPut(range, cast(char)(0x80 | ((c >> 6) & 0x3F)));
-            doPut(range, cast(char)(0x80 | (c & 0x3F)));
+            put(range, cast(char)(0xE0 | (c >> 12)));
+            put(range, cast(char)(0x80 | ((c >> 6) & 0x3F)));
+            put(range, cast(char)(0x80 | (c & 0x3F)));
             return 3;
         }
         if (c <= 0x10FFFF)
         {
-            doPut(range, cast(char)(0xF0 | (c >> 18)));
-            doPut(range, cast(char)(0x80 | ((c >> 12) & 0x3F)));
-            doPut(range, cast(char)(0x80 | ((c >> 6) & 0x3F)));
-            doPut(range, cast(char)(0x80 | (c & 0x3F)));
+            put(range, cast(char)(0xF0 | (c >> 18)));
+            put(range, cast(char)(0x80 | ((c >> 12) & 0x3F)));
+            put(range, cast(char)(0x80 | ((c >> 6) & 0x3F)));
+            put(range, cast(char)(0x80 | (c & 0x3F)));
             return 4;
         }
         else
@@ -1783,16 +1782,16 @@ if (isNativeOutputRange!(R, E))
     {
         if (c <= 0xFFFF)
         {
-            range.doPut(cast(wchar) c);
+            range.put(cast(wchar) c);
             return 1;
         }
-        range.doPut(cast(wchar) ((((c - 0x10000) >> 10) & 0x3FF) + 0xD800));
-        range.doPut(cast(wchar) (((c - 0x10000) & 0x3FF) + 0xDC00));
+        range.put(cast(wchar) ((((c - 0x10000) >> 10) & 0x3FF) + 0xD800));
+        range.put(cast(wchar) (((c - 0x10000) & 0x3FF) + 0xDC00));
         return 2;
     }
     else static if (is(Unqual!E == dchar))
     {
-        range.doPut(c);
+        range.put(c);
         return 1;
     }
     else
@@ -1800,8 +1799,10 @@ if (isNativeOutputRange!(R, E))
         static assert(0);
     }
 }
+
 unittest
 {
+    import std.array;
     Appender!(char[]) r;
     assert(encode!(char)('T', r) == 1);
     assert(encode!(wchar)('T', r) == 1);
@@ -2041,6 +2042,7 @@ body
 
 unittest
 {
+    import std.range;
     import std.typetuple;
     {
         import std.conv : to;
@@ -2125,6 +2127,8 @@ class UnrecognizedEncodingException : EncodingException
 /** Abstract base class of all encoding schemes */
 abstract class EncodingScheme
 {
+    import std.uni : toLower;
+    
     /**
      * Registers a subclass of EncodingScheme.
      *
@@ -2167,7 +2171,7 @@ abstract class EncodingScheme
      */
     static EncodingScheme create(string encodingName)
     {
-        auto p = std.string.toLower(encodingName) in supported;
+        auto p = toLower(encodingName) in supported;
         if (p is null)
             throw new EncodingException("Unrecognized Encoding: "~encodingName);
         string className = *p;
@@ -2787,7 +2791,7 @@ class EncodingSchemeUtf16Native : EncodingScheme
         {
             auto t = cast(const(wchar)[]) s;
             dchar c = std.encoding.decode(t);
-            s = s[$-t.length..$];
+            s = s[$-t.length * wchar.sizeof..$];
             return c;
         }
 
@@ -2800,7 +2804,7 @@ class EncodingSchemeUtf16Native : EncodingScheme
         {
             auto t = cast(const(wchar)[]) s;
             dchar c = std.encoding.safeDecode(t);
-            s = s[$-t.length..$];
+            s = s[$-t.length * wchar.sizeof..$];
             return c;
         }
 
@@ -2809,6 +2813,23 @@ class EncodingSchemeUtf16Native : EncodingScheme
             return cast(immutable(ubyte)[])"\uFFFD"w;
         }
     }
+}
+unittest
+{
+    version(LittleEndian)
+    {
+        auto efrom = EncodingScheme.create("utf-16le");
+        ubyte[6] sample = [154,1, 155,1, 156,1];
+    }
+    version(BigEndian)
+    {
+        auto efrom = EncodingScheme.create("utf-16be");
+        ubyte[6] sample = [1,154, 1,155, 1,156];
+    }
+    const(ubyte)[] ub = cast(const(ubyte)[])sample;
+    dchar dc = efrom.safeDecode(ub);
+    assert(dc == 410);
+    assert(ub.length == 4);
 }
 
 /**
@@ -2865,7 +2886,7 @@ class EncodingSchemeUtf32Native : EncodingScheme
         {
             auto t = cast(const(dchar)[]) s;
             dchar c = std.encoding.decode(t);
-            s = s[$-t.length..$];
+            s = s[$-t.length * dchar.sizeof..$];
             return c;
         }
 
@@ -2878,7 +2899,7 @@ class EncodingSchemeUtf32Native : EncodingScheme
         {
             auto t = cast(const(dchar)[]) s;
             dchar c = std.encoding.safeDecode(t);
-            s = s[$-t.length..$];
+            s = s[$-t.length * dchar.sizeof..$];
             return c;
         }
 
@@ -2887,6 +2908,23 @@ class EncodingSchemeUtf32Native : EncodingScheme
             return cast(immutable(ubyte)[])"\uFFFD"d;
         }
     }
+}
+unittest
+{
+    version(LittleEndian)
+    {
+        auto efrom = EncodingScheme.create("utf-32le");
+        ubyte[12] sample = [154,1,0,0, 155,1,0,0, 156,1,0,0];
+    }
+    version(BigEndian)
+    {
+        auto efrom = EncodingScheme.create("utf-32be");
+        ubyte[12] sample = [0,0,1,154, 0,0,1,155, 0,0,1,156];
+    }
+    const(ubyte)[] ub = cast(const(ubyte)[])sample;
+    dchar dc = efrom.safeDecode(ub);
+    assert(dc == 410);
+    assert(ub.length == 8);
 }
 
 //=============================================================================

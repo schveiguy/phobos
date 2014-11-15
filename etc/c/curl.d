@@ -3,6 +3,10 @@
 
    Converted to D from curl headers by $(LINK2 http://www.digitalmars.com/d/2.0/htod.html, htod) and
    cleaned up by Jonas Drewsen (jdrewsen)
+
+   Windows x86 note:
+   A DMD compatible libcurl static library can be downloaded from the dlang.org
+   $(LINK2 http://dlang.org/download.html, download page).
 */
 
 /* **************************************************************************
@@ -112,7 +116,7 @@ alias socket_t curl_socket_t;
 
 /// jdrewsen - Would like to get socket error constant from std.socket by it is private atm.
 version(Windows) {
-  private import std.c.windows.windows, std.c.windows.winsock;
+  private import core.sys.windows.windows, core.sys.windows.winsock2;
   enum CURL_SOCKET_BAD = SOCKET_ERROR;
 }
 version(Posix) enum CURL_SOCKET_BAD = -1;

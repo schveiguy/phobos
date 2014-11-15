@@ -1,14 +1,78 @@
 // Written in the D programming language.
 
 /**
-String handling functions. Objects of types $(D _string), $(D
-wstring), and $(D dstring) are value types and cannot be mutated
-element-by-element. For using mutation during building strings, use
-$(D char[]), $(D wchar[]), or $(D dchar[]). The $(D *_string) types
-are preferable because they don't exhibit undesired aliasing, thus
+$(SCRIPT inhibitQuickIndex = 1;)
+
+$(BOOKTABLE ,
+$(TR $(TH Category) $(TH Functions) )
+$(TR $(TDNW Searching)
+    $(TD $(MYREF indexOf) $(MYREF lastIndexOf) $(MYREF indexOfAny)
+    $(MYREF lastIndexOfAny) $(MYREF indexOfNeither) $(MYREF lastIndexOfNeither)
+    $(XREF _algorithm, startsWith) $(XREF _algorithm, endsWith)
+    $(MYREF inPattern) $(MYREF column)
+    $(LINK2 std_algorithm.html, std.algorithm search functions)
+    )
+)
+
+$(TR $(TDNW Comparison)
+    $(TD $(XREF _algorithm, cmp)
+    $(MYREF isNumeric) $(MYREF countchars)
+    $(LINK2 std_uni.html, std.uni comparison functions )
+    $(LINK2 std_ascii.html, std.ascii comparison functions )
+    )
+)
+
+$(TR $(TDNW Mutation)
+    $(TD $(MYREF toLower) $(MYREF toLowerInPlace) $(MYREF toUpper)
+    $(MYREF toUpperInPlace) $(MYREF capitalize) $(MYREF removechars)
+    $(MYREF squeeze) $(MYREF munch) $(XREF _range, retro)
+    )
+)
+
+$(TR $(TDNW Pruning and Filling)
+    $(TD $(MYREF stripLeft) $(MYREF stripRight) $(MYREF strip) $(MYREF chomp)
+    $(MYREF chompPrefix) $(MYREF chop) $(MYREF leftJustify) $(MYREF rightJustify)
+    $(MYREF center) $(MYREF detab) $(MYREF entab) $(MYREF wrap)
+    $(MYREF outdent) $(LINK2 std_array.html#popFront, popFront)
+    $(XREF _array, front) $(XREF _array, popBack) $(XREF _array, back)
+    )
+)
+
+$(TR $(TDNW Substitution)
+    $(TD $(MYREF translate) $(MYREF soundex) $(MYREF abbrev) $(MYREF succ)
+    $(MYREF tr)
+    )
+)
+
+$(TR $(TDNW Miscellaneous)
+    $(TD $(MYREF fromStringz) $(MYREF toStringz) $(MYREF splitLines)
+    $(MYREF representation) $(MYREF assumeUTF)
+    )
+)
+)
+
+This module presents String handling functions.
+Objects of types $(D _string), $(D wstring), and $(D dstring) are value types
+and cannot be mutated element-by-element. For using mutation during building
+strings, use $(D char[]), $(D wchar[]), or $(D dchar[]). The $(D xxxstring)
+types are preferable because they don't exhibit undesired aliasing, thus
 making code more robust.
 
+Not all functions for D _string handling are in this module. Functions related
+to Unicode and ASCII are found in $(LINK2 std_uni.html, std.uni) and
+$(LINK2 std_ascii.html, std.ascii), respectively. Other functions that have a
+wider generality than just strings can be found in std.algorithm and std.range.
+
+Functions 
+$(XREF uni, icmp)
+$(XREF uni, toLower)
+$(XREF uni, toLowerInPlace)
+$(XREF uni, toUpper)
+$(XREF uni, toUpperInPlace)
+are publicly imported. 
+
 Macros: WIKI = Phobos/StdString
+MYREF = <font face='Consolas, "Bitstream Vera Sans Mono", "Andale Mono", Monaco, "DejaVu Sans Mono", "Lucida Console", monospace'><a href="#.$1">$1</a>&nbsp;</font>
 
 Copyright: Copyright Digital Mars 2007-.
 
@@ -23,27 +87,24 @@ Source:    $(PHOBOSSRC std/_string.d)
 */
 module std.string;
 
-//debug=string;                 // uncomment to turn on debugging printf's
-debug(string) import core.stdc.stdio;
+//debug=string;                 // uncomment to turn on debugging trustedPrintf's
 
-import core.exception : RangeError, onRangeError;
-import core.vararg, core.stdc.stdlib, core.stdc.string,
-    std.algorithm, std.ascii, std.conv, std.exception, std.format, std.functional,
-    std.range, std.traits,
-    std.typecons, std.typetuple, std.uni, std.utf;
-
-//Remove when repeat is finally removed. They're only here as part of the
-//deprecation of these functions in std.string.
-public import std.algorithm : startsWith, endsWith, cmp, count;
-public import std.array : join, split;
-
-version(Windows) extern (C)
+debug(string) private
+void trustedPrintf(in char* str) @trusted nothrow @nogc
 {
-    size_t wcslen(in wchar *);
-    int wcscmp(in wchar *, in wchar *);
+    import core.stdc.stdio : printf;
+    printf("%s", str);
 }
 
-version(unittest) import std.algorithm : filter;
+public import std.uni : icmp, toLower, toLowerInPlace, toUpper, toUpperInPlace;
+
+import std.range.constraints;
+import std.traits;
+import std.typetuple;
+
+//public imports for backward compatibility
+public import std.algorithm : startsWith, endsWith, cmp, count;
+public import std.array : join, split;
 
 /* ************* Exceptions *************** */
 
@@ -70,73 +131,6 @@ class StringException : Exception
 
 
 /++
-    Compares two ranges of characters lexicographically. The comparison is
-    case insensitive. Use $(XREF algorithm, cmp) for a case sensitive
-    comparison. For details see $(XREF uni, _icmp).
-
-    $(BOOKTABLE,
-        $(TR $(TD $(D < 0))  $(TD $(D s1 < s2) ))
-        $(TR $(TD $(D = 0))  $(TD $(D s1 == s2)))
-        $(TR $(TD $(D > 0))  $(TD $(D s1 > s2)))
-     )
-+/
-alias icmp = std.uni.icmp;
-
-unittest
-{
-    debug(string) printf("string.icmp.unittest\n");
-
-    assertCTFEable!(
-    {
-    assert(icmp("Ü", "ü") == 0, "Über failure");
-    assert(icmp("abc", "abc") == 0);
-    assert(icmp("ABC", "abc") == 0);
-    assert(icmp("abc"w, "abc") == 0);
-    assert(icmp("ABC", "abc"w) == 0);
-    assert(icmp("abc"d, "abc") == 0);
-    assert(icmp("ABC", "abc"d) == 0);
-    assert(icmp(cast(char[])"abc", "abc") == 0);
-    assert(icmp("ABC", cast(char[])"abc") == 0);
-    assert(icmp(cast(wchar[])"abc"w, "abc") == 0);
-    assert(icmp("ABC", cast(wchar[])"abc"w) == 0);
-    assert(icmp(cast(dchar[])"abc"d, "abc") == 0);
-    assert(icmp("ABC", cast(dchar[])"abc"d) == 0);
-    assert(icmp(cast(string)null, cast(string)null) == 0);
-    assert(icmp("", "") == 0);
-    assert(icmp("abc", "abcd") < 0);
-    assert(icmp("abcd", "abc") > 0);
-    assert(icmp("abc", "abd") < 0);
-    assert(icmp("bbc", "abc") > 0);
-    assert(icmp("abc", "abc"w) == 0);
-    assert(icmp("ABC"w, "abc") == 0);
-    assert(icmp("", ""w) == 0);
-    assert(icmp("abc"w, "abcd") < 0);
-    assert(icmp("abcd", "abc"w) > 0);
-    assert(icmp("abc", "abd") < 0);
-    assert(icmp("bbc"w, "abc") > 0);
-    assert(icmp("aaa", "aaaa"d) < 0);
-    assert(icmp("aaaa"w, "aaa"d) > 0);
-    assert(icmp("aaa"d, "aaa"w) == 0);
-    assert(icmp("\u0430\u0411\u0543"d, "\u0430\u0411\u0543") == 0);
-    assert(icmp("\u0430\u0411\u0543"d, "\u0431\u0410\u0544") < 0);
-    assert(icmp("\u0431\u0411\u0544"d, "\u0431\u0410\u0543") > 0);
-    assert(icmp("\u0430\u0410\u0543"d, "\u0430\u0410\u0544") < 0);
-    assert(icmp("\u0430\u0411\u0543"d, "\u0430\u0411\u0543\u0237") < 0);
-    assert(icmp("\u0430\u0411\u0543\u0237"d, "\u0430\u0411\u0543") > 0);
-
-    assert(icmp("aaa", filter!"true"("aaa")) == 0);
-    assert(icmp(filter!"true"("aaa"), "aaa") == 0);
-    assert(icmp(filter!"true"("aaa"), filter!"true"("aaa")) == 0);
-    assert(icmp(filter!"true"("\u0430\u0411\u0543"d), "\u0430\u0411\u0543") == 0);
-    assert(icmp(filter!"true"("\u0430\u0411\u0543"d), "\u0431\u0410\u0544"w) < 0);
-    assert(icmp("\u0431\u0411\u0544"d, filter!"true"("\u0431\u0410\u0543"w)) > 0);
-    assert(icmp("\u0430\u0410\u0543"d, filter!"true"("\u0430\u0410\u0544")) < 0);
-    assert(icmp(filter!"true"("\u0430\u0411\u0543"d), filter!"true"("\u0430\u0411\u0543\u0237")) < 0);
-    assert(icmp(filter!"true"("\u0430\u0411\u0543\u0237"d), filter!"true"("\u0430\u0411\u0543")) > 0);
-    });
-}
-
-/++
     Returns a D-style array of $(D char) given a zero-terminated C-style string.
     The returned array will retain the same type qualifiers as the input.
 
@@ -145,6 +139,7 @@ unittest
 +/
 
 inout(char)[] fromStringz(inout(char)* cString) @system pure {
+    import core.stdc.string : strlen;
     return cString ? cString[0 .. strlen(cString)] : null;
 }
 
@@ -175,6 +170,7 @@ in
 }
 out (result)
 {
+    import core.stdc.string : strlen, memcmp;
     if (result)
     {
         auto slen = s.length;
@@ -185,6 +181,7 @@ out (result)
 }
 body
 {
+    import std.exception : assumeUnique;
     /+ Unfortunately, this isn't reliable.
      We could make this work if string literals are put
      in read-only memory and we test if s[] is pointing into
@@ -209,7 +206,7 @@ body
 }
 
 /++ Ditto +/
-immutable(char)* toStringz(string s) @trusted pure nothrow
+immutable(char)* toStringz(in string s) @trusted pure nothrow
 {
     if (s.empty) return "".ptr;
     /* Peek past end of s[], if it's 0, no conversion necessary.
@@ -230,7 +227,10 @@ immutable(char)* toStringz(string s) @trusted pure nothrow
 
 pure nothrow unittest
 {
-    debug(string) printf("string.toStringz.unittest\n");
+    import core.stdc.string : strlen;
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.toStringz.unittest\n");
 
     // TODO: CTFEable toStringz is really necessary?
     //assertCTFEable!(
@@ -252,6 +252,10 @@ pure nothrow unittest
     test = "foo\0";
     p = toStringz(test);
     assert(p[0] == 'f' && p[1] == 'o' && p[2] == 'o' && p[3] == 0);
+
+    const string test2 = "";
+    p = toStringz(test2);
+    assert(*p == 0);
     //});
 }
 
@@ -267,15 +271,17 @@ enum CaseSensitive { no, yes }
 
     $(D cs) indicates whether the comparisons are case sensitive.
   +/
-ptrdiff_t indexOf(Char)(in Char[] s,
-                      dchar c,
-                      CaseSensitive cs = CaseSensitive.yes) @safe pure
+ptrdiff_t indexOf(Char)(in Char[] s, in dchar c,
+        in CaseSensitive cs = CaseSensitive.yes) @safe pure
     if (isSomeChar!Char)
 {
+    import std.ascii : toLower, isASCII;
+    import std.uni : toLower;
     if (cs == CaseSensitive.yes)
     {
         static if (Char.sizeof == 1)
         {
+            import core.stdc.string : memchr;
             if (std.ascii.isASCII(c) && !__ctfe)
             {                                               // Plain old ASCII
                 auto trustedmemchr() @trusted { return cast(Char*)memchr(s.ptr, c, s.length); }
@@ -322,10 +328,12 @@ ptrdiff_t indexOf(Char)(in Char[] s,
     return -1;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.indexOf.unittest\n");
+    import std.conv : to;
+    debug(string) trustedPrintf("string.indexOf.unittest\n");
 
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(string, wstring, dstring))
@@ -366,8 +374,8 @@ unittest
 
     $(D cs) indicates whether the comparisons are case sensitive.
   +/
-ptrdiff_t indexOf(Char)(const(Char)[] s, dchar c, const size_t startIdx,
-        CaseSensitive cs = CaseSensitive.yes) @safe pure
+ptrdiff_t indexOf(Char)(const(Char)[] s, in dchar c, in size_t startIdx,
+        in CaseSensitive cs = CaseSensitive.yes) @safe pure
     if (isSomeChar!Char)
 {
     if (startIdx < s.length)
@@ -381,9 +389,10 @@ ptrdiff_t indexOf(Char)(const(Char)[] s, dchar c, const size_t startIdx,
     return -1;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.indexOf(startIdx).unittest\n");
+    import std.conv : to;
+    debug(string) trustedPrintf("string.indexOf(startIdx).unittest\n");
 
     foreach (S; TypeTuple!(string, wstring, dstring))
     {
@@ -427,11 +436,12 @@ unittest
 
     $(D cs) indicates whether the comparisons are case sensitive.
   +/
-ptrdiff_t indexOf(Char1, Char2)(const(Char1)[] s,
-                              const(Char2)[] sub,
-                              CaseSensitive cs = CaseSensitive.yes)
+ptrdiff_t indexOf(Char1, Char2)(const(Char1)[] s, const(Char2)[] sub,
+        in CaseSensitive cs = CaseSensitive.yes) @trusted
     if (isSomeChar!Char1 && isSomeChar!Char2)
 {
+    import std.uni : toLower;
+    import std.algorithm : find;
     const(Char1)[] balance;
     if (cs == CaseSensitive.yes)
     {
@@ -446,10 +456,12 @@ ptrdiff_t indexOf(Char1, Char2)(const(Char1)[] s,
     return balance.empty ? -1 : balance.ptr - s.ptr;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.indexOf.unittest\n");
+    import std.conv : to;
+    debug(string) trustedPrintf("string.indexOf.unittest\n");
 
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(string, wstring, dstring))
@@ -508,8 +520,8 @@ unittest
     $(D cs) indicates whether the comparisons are case sensitive.
   +/
 ptrdiff_t indexOf(Char1, Char2)(const(Char1)[] s, const(Char2)[] sub,
-        const size_t startIdx, CaseSensitive cs = CaseSensitive.yes)
-    if (isSomeChar!Char1 && isSomeChar!Char2)
+        in size_t startIdx, in CaseSensitive cs = CaseSensitive.yes)
+    @safe if (isSomeChar!Char1 && isSomeChar!Char2)
 {
     if (startIdx < s.length)
     {
@@ -522,9 +534,10 @@ ptrdiff_t indexOf(Char1, Char2)(const(Char1)[] s, const(Char2)[] sub,
     return -1;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.indexOf(startIdx).unittest\n");
+    import std.conv : to;
+    debug(string) trustedPrintf("string.indexOf(startIdx).unittest\n");
 
     foreach(S; TypeTuple!(string, wstring, dstring))
     {
@@ -586,11 +599,12 @@ unittest
 
     $(D cs) indicates whether the comparisons are case sensitive.
   +/
-ptrdiff_t lastIndexOf(Char)(const(Char)[] s,
-                          dchar c,
-                          CaseSensitive cs = CaseSensitive.yes) @safe pure
+ptrdiff_t lastIndexOf(Char)(const(Char)[] s, in dchar c,
+        in CaseSensitive cs = CaseSensitive.yes) @safe pure
     if (isSomeChar!Char)
 {
+    import std.ascii : isASCII, toLower;
+    import std.utf : canSearchInCodeUnits;
     if (cs == CaseSensitive.yes)
     {
         if (canSearchInCodeUnits!Char(c))
@@ -647,10 +661,12 @@ ptrdiff_t lastIndexOf(Char)(const(Char)[] s,
     return -1;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.lastIndexOf.unittest\n");
+    import std.conv : to;
+    debug(string) trustedPrintf("string.lastIndexOf.unittest\n");
 
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(string, wstring, dstring))
@@ -695,8 +711,8 @@ unittest
 
     $(D cs) indicates whether the comparisons are case sensitive.
   +/
-ptrdiff_t lastIndexOf(Char)(const(Char)[] s, dchar c, const size_t startIdx,
-        CaseSensitive cs = CaseSensitive.yes) @safe pure
+ptrdiff_t lastIndexOf(Char)(const(Char)[] s, in dchar c, in size_t startIdx,
+        in CaseSensitive cs = CaseSensitive.yes) @safe pure
     if (isSomeChar!Char)
 {
     if (startIdx <= s.length)
@@ -707,9 +723,11 @@ ptrdiff_t lastIndexOf(Char)(const(Char)[] s, dchar c, const size_t startIdx,
     return -1;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.lastIndexOf.unittest\n");
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.lastIndexOf.unittest\n");
 
     foreach(S; TypeTuple!(string, wstring, dstring))
     {
@@ -745,11 +763,13 @@ unittest
 
     $(D cs) indicates whether the comparisons are case sensitive.
   +/
-ptrdiff_t lastIndexOf(Char1, Char2)(const(Char1)[] s,
-                                  const(Char2)[] sub,
-                                  CaseSensitive cs = CaseSensitive.yes) @safe pure
+ptrdiff_t lastIndexOf(Char1, Char2)(const(Char1)[] s, const(Char2)[] sub,
+        in CaseSensitive cs = CaseSensitive.yes) @safe pure
     if (isSomeChar!Char1 && isSomeChar!Char2)
 {
+    import std.utf : strideBack;
+    import std.conv : to;
+    import std.algorithm : endsWith;
     if (sub.empty)
         return s.length;
 
@@ -760,6 +780,8 @@ ptrdiff_t lastIndexOf(Char1, Char2)(const(Char1)[] s,
     {
         static if (is(Unqual!Char1 == Unqual!Char2))
         {
+            import core.stdc.string : memcmp;
+
             immutable c = sub[0];
 
             for (ptrdiff_t i = s.length - sub.length; i >= 0; --i)
@@ -781,7 +803,8 @@ ptrdiff_t lastIndexOf(Char1, Char2)(const(Char1)[] s,
                         {
                             return memcmp(s1, s2, n);
                         }
-                        if (trustedMemcmp(&s[i + 1], &sub[1], sub.length - 1) == 0)
+                        if (trustedMemcmp(&s[i + 1], &sub[1],
+                                (sub.length - 1) * Char1.sizeof) == 0)
                             return i;
                     }
                 }
@@ -817,10 +840,13 @@ ptrdiff_t lastIndexOf(Char1, Char2)(const(Char1)[] s,
     return -1;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.lastIndexOf.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("string.lastIndexOf.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(string, wstring, dstring))
@@ -875,6 +901,23 @@ unittest
     });
 }
 
+@safe pure unittest // issue13529
+{
+    import std.conv : to;
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring))
+        {
+            enum typeStr = S.stringof ~ " " ~ T.stringof;
+            auto idx = lastIndexOf(to!T("Hällö Wörldö ö"),to!S("ö ö"));
+            assert(idx != -1, to!string(idx) ~ " " ~ typeStr);
+
+            idx = lastIndexOf(to!T("Hällö Wörldö ö"),to!S("ö öd"));
+            assert(idx == -1, to!string(idx) ~ " " ~ typeStr);
+        }
+    }
+}
+
 /++
     Returns the index of the last occurrence of $(D sub) in $(D s). If $(D sub)
     is not found, then $(D -1) is returned. The $(D startIdx) slices $(D s) in
@@ -886,7 +929,7 @@ unittest
     $(D cs) indicates whether the comparisons are case sensitive.
   +/
 ptrdiff_t lastIndexOf(Char1, Char2)(const(Char1)[] s, const(Char2)[] sub,
-        const size_t startIdx, CaseSensitive cs = CaseSensitive.yes) @safe pure
+        in size_t startIdx, in CaseSensitive cs = CaseSensitive.yes) @safe pure
     if (isSomeChar!Char1 && isSomeChar!Char2)
 {
     if (startIdx <= s.length)
@@ -897,9 +940,11 @@ ptrdiff_t lastIndexOf(Char1, Char2)(const(Char1)[] s, const(Char2)[] sub,
     return -1;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.lastIndexOf.unittest\n");
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.lastIndexOf.unittest\n");
 
     foreach(S; TypeTuple!(string, wstring, dstring))
     {
@@ -945,44 +990,796 @@ unittest
     }
 }
 
+private ptrdiff_t indexOfAnyNeitherImpl(bool forward, bool any, Char, Char2)(
+        const(Char)[] haystack, const(Char2)[] needles,
+        in CaseSensitive cs = CaseSensitive.yes) @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    import std.algorithm : canFind;
+    if (cs == CaseSensitive.yes)
+    {
+        static if (forward)
+        {
+            static if (any)
+            {
+                import std.algorithm : findAmong;
+                size_t n = haystack.findAmong(needles).length;
+                return n ? haystack.length - n : -1;
+            }
+            else
+            {
+                foreach (idx, dchar hay; haystack)
+                {
+                    if (!canFind(needles, hay))
+                    {
+                        return idx;
+                    }
+                }
+            }
+        }
+        else
+        {
+            static if (any)
+            {
+                import std.utf : strideBack;
+                import std.algorithm : findAmong;
+                import std.range : retro;
+                size_t n = haystack.retro.findAmong(needles).source.length;
+                if (n)
+                {
+                    return n - haystack.strideBack(n);
+                }
+            }
+            else
+            {
+                foreach_reverse (idx, dchar hay; haystack)
+                {
+                    if(!canFind(needles, hay))
+                    {
+                        return idx;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        if (needles.length <= 16 && needles.walkLength(17))
+        {
+            size_t si = 0;
+            dchar[16] scratch = void;
+            foreach ( dchar c; needles)
+            {
+                scratch[si++] = std.uni.toLower(c);
+            }
+
+            static if (forward)
+            {
+                foreach (i, dchar c; haystack)
+                {
+                    if (canFind(scratch[0 .. si], std.uni.toLower(c)) == any)
+                    {
+                        return i;
+                    }
+                }
+            }
+            else
+            {
+                foreach_reverse (i, dchar c; haystack)
+                {
+                    if (canFind(scratch[0 .. si], std.uni.toLower(c)) == any)
+                    {
+                        return i;
+                    }
+                }
+            }
+        }
+        else
+        {
+            static bool f(dchar a, dchar b)
+            {
+                return std.uni.toLower(a) == b;
+            }
+
+            static if (forward)
+            {
+                foreach (i, dchar c; haystack)
+                {
+                    if (canFind!f(needles, std.uni.toLower(c)) == any)
+                    {
+                        return i;
+                    }
+                }
+            }
+            else
+            {
+                foreach_reverse (i, dchar c; haystack)
+                {
+                    if (canFind!f(needles, std.uni.toLower(c)) == any)
+                    {
+                        return i;
+                    }
+                }
+            }
+        }
+    }
+
+    return -1;
+}
+
+/**
+    Returns the index of the first occurence of any of the elements in $(D
+    needles) in $(D haystack). If no element of $(D needles) is found,
+    then $(D -1) is returned.
+
+    Params:
+    haystack = String to search for needles in.
+    needles = Strings to search for in haystack.
+        cs = Indicates whether the comparisons are case sensitive.
+*/
+ptrdiff_t indexOfAny(Char,Char2)(const(Char)[] haystack, const(Char2)[] needles,
+        in CaseSensitive cs = CaseSensitive.yes) @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    return indexOfAnyNeitherImpl!(true, true)(haystack, needles, cs);
+}
+
+///
+@safe pure unittest {
+    import std.conv : to;
+
+    ptrdiff_t i = "helloWorld".indexOfAny("Wr");
+    assert(i == 5);
+    i = "öällo world".indexOfAny("lo ");
+    assert(i == 4, to!string(i));
+}
+
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.indexOfAny.unittest\n");
+
+    import std.exception;
+    assertCTFEable!(
+    {
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring))
+        {
+            assert(indexOfAny(cast(S)null, to!T("a")) == -1);
+            assert(indexOfAny(to!S("def"), to!T("rsa")) == -1);
+            assert(indexOfAny(to!S("abba"), to!T("a")) == 0);
+            assert(indexOfAny(to!S("def"), to!T("f")) == 2);
+            assert(indexOfAny(to!S("dfefffg"), to!T("fgh")) == 1);
+            assert(indexOfAny(to!S("dfeffgfff"), to!T("feg")) == 1);
+
+            assert(indexOfAny(to!S("zfeffgfff"), to!T("ACDC"),
+                CaseSensitive.no) == -1);
+            assert(indexOfAny(to!S("def"), to!T("MI6"),
+                CaseSensitive.no) == -1);
+            assert(indexOfAny(to!S("abba"), to!T("DEA"),
+                CaseSensitive.no) == 0);
+            assert(indexOfAny(to!S("def"), to!T("FBI"), CaseSensitive.no) == 2);
+            assert(indexOfAny(to!S("dfefffg"), to!T("NSA"), CaseSensitive.no)
+                == -1);
+            assert(indexOfAny(to!S("dfeffgfff"), to!T("BND"),
+                CaseSensitive.no) == 0);
+            assert(indexOfAny(to!S("dfeffgfff"), to!T("BNDabCHIJKQEPÖÖSYXÄ??ß"),
+                CaseSensitive.no) == 0);
+
+            assert(indexOfAny("\u0100", to!T("\u0100"), CaseSensitive.no) == 0);
+        }
+    }
+    }
+    );
+}
+
+/**
+    Returns the index of the first occurence of any of the elements in $(D
+    needles) in $(D haystack). If no element of $(D needles) is found,
+    then $(D -1) is returned. The $(D startIdx) slices $(D s) in the following
+    way $(D haystack[startIdx .. $]). $(D startIdx) represents a codeunit
+    index in $(D haystack). If the sequence ending at $(D startIdx) does not
+    represent a well formed codepoint, then a $(XREF utf,UTFException) may be
+    thrown.
+
+    Params:
+    haystack = String to search for needles in.
+    needles = Strings to search for in haystack.
+        startIdx = slices haystack like this $(D haystack[startIdx .. $]). If
+        the startIdx is greater equal the length of haystack the functions
+        returns $(D -1).
+        cs = Indicates whether the comparisons are case sensitive.
+*/
+ptrdiff_t indexOfAny(Char,Char2)(const(Char)[] haystack, const(Char2)[] needles,
+        in size_t startIdx, in CaseSensitive cs = CaseSensitive.yes) @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    if (startIdx < haystack.length)
+    {
+        ptrdiff_t foundIdx = indexOfAny(haystack[startIdx .. $], needles, cs);
+        if (foundIdx != -1)
+        {
+            return foundIdx + cast(ptrdiff_t)startIdx;
+        }
+    }
+
+    return -1;
+}
+
+///
+@safe pure unittest
+{
+    import std.conv : to;
+
+    ptrdiff_t i = "helloWorld".indexOfAny("Wr", 4);
+    assert(i == 5);
+
+    i = "Foo öällo world".indexOfAny("lh", 3);
+    assert(i == 8, to!string(i));
+}
+
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.indexOfAny(startIdx).unittest\n");
+
+    foreach(S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach(T; TypeTuple!(string, wstring, dstring))
+        {
+            assert(indexOfAny(cast(S)null, to!T("a"), 1337) == -1);
+            assert(indexOfAny(to!S("def"), to!T("AaF"), 0) == -1);
+            assert(indexOfAny(to!S("abba"), to!T("NSa"), 2) == 3);
+            assert(indexOfAny(to!S("def"), to!T("fbi"), 1) == 2);
+            assert(indexOfAny(to!S("dfefffg"), to!T("foo"), 2) == 3);
+            assert(indexOfAny(to!S("dfeffgfff"), to!T("fsb"), 5) == 6);
+
+            assert(indexOfAny(to!S("dfeffgfff"), to!T("NDS"), 1,
+                CaseSensitive.no) == -1);
+            assert(indexOfAny(to!S("def"), to!T("DRS"), 2,
+                CaseSensitive.no) == -1);
+            assert(indexOfAny(to!S("abba"), to!T("SI"), 3,
+                CaseSensitive.no) == -1);
+            assert(indexOfAny(to!S("deO"), to!T("ASIO"), 1,
+                CaseSensitive.no) == 2);
+            assert(indexOfAny(to!S("dfefffg"), to!T("fbh"), 2,
+                CaseSensitive.no) == 3);
+            assert(indexOfAny(to!S("dfeffgfff"), to!T("fEe"), 4,
+                CaseSensitive.no) == 4);
+            assert(indexOfAny(to!S("dfeffgffföä"), to!T("föä"), 9,
+                CaseSensitive.no) == 9);
+
+            assert(indexOfAny("\u0100", to!T("\u0100"), 0,
+                CaseSensitive.no) == 0);
+        }
+
+        foreach(cs; EnumMembers!CaseSensitive)
+        {
+            assert(indexOfAny("hello\U00010143\u0100\U00010143",
+                to!S("e\u0100"), 3, cs) == 9);
+            assert(indexOfAny("hello\U00010143\u0100\U00010143"w,
+                to!S("h\u0100"), 3, cs) == 7);
+            assert(indexOfAny("hello\U00010143\u0100\U00010143"d,
+                to!S("l\u0100"), 5, cs) == 6);
+        }
+    }
+}
+
+/**
+    Returns the index of the last occurence of any of the elements in $(D
+    needles) in $(D haystack). If no element of $(D needles) is found,
+    then $(D -1) is returned.
+
+    Params:
+    haystack = String to search for needles in.
+    needles = Strings to search for in haystack.
+        cs = Indicates whether the comparisons are case sensitive.
+*/
+ptrdiff_t lastIndexOfAny(Char,Char2)(const(Char)[] haystack,
+        const(Char2)[] needles, in CaseSensitive cs = CaseSensitive.yes) @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    return indexOfAnyNeitherImpl!(false, true)(haystack, needles, cs);
+}
+
+///
+@safe pure unittest
+{
+    ptrdiff_t i = "helloWorld".lastIndexOfAny("Wlo");
+    assert(i == 8);
+
+    i = "Foo öäöllo world".lastIndexOfAny("öF");
+    assert(i == 8);
+}
+
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.lastIndexOfAny.unittest\n");
+
+    import std.exception;
+    assertCTFEable!(
+    {
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring))
+        {
+            assert(lastIndexOfAny(cast(S)null, to!T("a")) == -1);
+            assert(lastIndexOfAny(to!S("def"), to!T("rsa")) == -1);
+            assert(lastIndexOfAny(to!S("abba"), to!T("a")) == 3);
+            assert(lastIndexOfAny(to!S("def"), to!T("f")) == 2);
+            assert(lastIndexOfAny(to!S("dfefffg"), to!T("fgh")) == 6);
+
+            ptrdiff_t oeIdx = 9;
+               if (is(S == wstring) || is(S == dstring))
+            {
+                oeIdx = 8;
+            }
+
+            auto foundOeIdx = lastIndexOfAny(to!S("dfeffgföf"), to!T("feg"));
+            assert(foundOeIdx == oeIdx, to!string(foundOeIdx));
+
+            assert(lastIndexOfAny(to!S("zfeffgfff"), to!T("ACDC"),
+                CaseSensitive.no) == -1);
+            assert(lastIndexOfAny(to!S("def"), to!T("MI6"),
+                CaseSensitive.no) == -1);
+            assert(lastIndexOfAny(to!S("abba"), to!T("DEA"),
+                CaseSensitive.no) == 3);
+            assert(lastIndexOfAny(to!S("def"), to!T("FBI"),
+                CaseSensitive.no) == 2);
+            assert(lastIndexOfAny(to!S("dfefffg"), to!T("NSA"),
+                CaseSensitive.no) == -1);
+
+            oeIdx = 2;
+               if (is(S == wstring) || is(S == dstring))
+            {
+                oeIdx = 1;
+            }
+            assert(lastIndexOfAny(to!S("ödfeffgfff"), to!T("BND"),
+                CaseSensitive.no) == oeIdx);
+
+            assert(lastIndexOfAny("\u0100", to!T("\u0100"),
+                CaseSensitive.no) == 0);
+        }
+    }
+    }
+    );
+}
+
+/**
+    Returns the index of the last occurence of any of the elements in $(D
+    needles) in $(D haystack). If no element of $(D needles) is found,
+    then $(D -1) is returned. The $(D stopIdx) slices $(D s) in the following
+    way $(D s[0 .. stopIdx]). $(D stopIdx) represents a codeunit index in
+    $(D s). If the sequence ending at $(D startIdx) does not represent a well
+    formed codepoint, then a $(XREF utf,UTFException) may be thrown.
+
+    Params:
+    haystack = String to search for needles in.
+    needles = Strings to search for in haystack.
+        stopIdx = slices haystack like this $(D haystack[0 .. stopIdx]). If
+        the stopIdx is greater equal the length of haystack the functions
+        returns $(D -1).
+        cs = Indicates whether the comparisons are case sensitive.
+*/
+ptrdiff_t lastIndexOfAny(Char,Char2)(const(Char)[] haystack,
+        const(Char2)[] needles, in size_t stopIdx,
+        in CaseSensitive cs = CaseSensitive.yes) @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    if (stopIdx <= haystack.length)
+    {
+        return lastIndexOfAny(haystack[0u .. stopIdx], needles, cs);
+    }
+
+    return -1;
+}
+
+///
+@safe pure unittest
+{
+    import std.conv : to;
+
+    ptrdiff_t i = "helloWorld".lastIndexOfAny("Wlo", 4);
+    assert(i == 3);
+
+    i = "Foo öäöllo world".lastIndexOfAny("öF", 3);
+    assert(i == 0);
+}
+
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.lastIndexOfAny(index).unittest\n");
+
+    import std.exception;
+    assertCTFEable!(
+    {
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring))
+        {
+            enum typeStr = S.stringof ~ " " ~ T.stringof;
+
+            assert(lastIndexOfAny(cast(S)null, to!T("a"), 1337) == -1,
+                typeStr);
+            assert(lastIndexOfAny(to!S("abcdefcdef"), to!T("c"), 7) == 6,
+                typeStr);
+            assert(lastIndexOfAny(to!S("abcdefcdef"), to!T("cd"), 5) == 3,
+                typeStr);
+            assert(lastIndexOfAny(to!S("abcdefcdef"), to!T("ef"), 6) == 5,
+                typeStr);
+            assert(lastIndexOfAny(to!S("abcdefCdef"), to!T("c"), 8) == 2,
+                typeStr);
+            assert(lastIndexOfAny(to!S("abcdefcdef"), to!T("x"), 7) == -1,
+                typeStr);
+            assert(lastIndexOfAny(to!S("abcdefcdef"), to!T("xy"), 4) == -1,
+                typeStr);
+            assert(lastIndexOfAny(to!S("öabcdefcdef"), to!T("ö"), 2) == 0,
+                typeStr);
+
+            assert(lastIndexOfAny(cast(S)null, to!T("a"), 1337,
+                CaseSensitive.no) == -1, typeStr);
+            assert(lastIndexOfAny(to!S("abcdefcdef"), to!T("C"), 7,
+                CaseSensitive.no) == 6, typeStr);
+            assert(lastIndexOfAny(to!S("ABCDEFCDEF"), to!T("cd"), 5,
+                CaseSensitive.no) == 3, typeStr);
+            assert(lastIndexOfAny(to!S("abcdefcdef"), to!T("EF"), 6,
+                CaseSensitive.no) == 5, typeStr);
+            assert(lastIndexOfAny(to!S("ABCDEFcDEF"), to!T("C"), 8,
+                CaseSensitive.no) == 6, typeStr);
+            assert(lastIndexOfAny(to!S("ABCDEFCDEF"), to!T("x"), 7,
+                CaseSensitive.no) == -1, typeStr);
+            assert(lastIndexOfAny(to!S("abCdefcdef"), to!T("XY"), 4,
+                CaseSensitive.no) == -1, typeStr);
+            assert(lastIndexOfAny(to!S("ÖABCDEFCDEF"), to!T("ö"), 2,
+                CaseSensitive.no) == 0, typeStr);
+        }
+    }
+    }
+    );
+}
+
+/**
+    Returns the index of the first occurence of any character not an elements
+    in $(D needles) in $(D haystack). If all element of $(D haystack) are
+    element of $(D needles) $(D -1) is returned.
+
+    Params:
+    haystack = String to search for needles in.
+    needles = Strings to search for in haystack.
+        cs = Indicates whether the comparisons are case sensitive.
+*/
+ptrdiff_t indexOfNeither(Char,Char2)(const(Char)[] haystack,
+        const(Char2)[] needles, in CaseSensitive cs = CaseSensitive.yes)
+        @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    return indexOfAnyNeitherImpl!(true, false)(haystack, needles, cs);
+}
+
+///
+@safe pure unittest
+{
+    assert(indexOfNeither("def", "a") == 0);
+    assert(indexOfNeither("def", "de") == 2);
+    assert(indexOfNeither("dfefffg", "dfe") == 6);
+}
+
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.indexOf.unittest\n");
+
+    import std.exception;
+    assertCTFEable!(
+    {
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring))
+        {
+            assert(indexOfNeither(cast(S)null, to!T("a")) == -1);
+            assert(indexOfNeither("abba", "a") == 1);
+
+            assert(indexOfNeither(to!S("dfeffgfff"), to!T("a"),
+                CaseSensitive.no) == 0);
+            assert(indexOfNeither(to!S("def"), to!T("D"),
+                CaseSensitive.no) == 1);
+            assert(indexOfNeither(to!S("ABca"), to!T("a"),
+                CaseSensitive.no) == 1);
+            assert(indexOfNeither(to!S("def"), to!T("f"),
+                CaseSensitive.no) == 0);
+            assert(indexOfNeither(to!S("DfEfffg"), to!T("dFe"),
+                CaseSensitive.no) == 6);
+            if (is(S == string))
+            {
+                assert(indexOfNeither(to!S("äDfEfffg"), to!T("ädFe"),
+                    CaseSensitive.no) == 8,
+                    to!string(indexOfNeither(to!S("äDfEfffg"), to!T("ädFe"),
+                    CaseSensitive.no)));
+            }
+            else
+            {
+                assert(indexOfNeither(to!S("äDfEfffg"), to!T("ädFe"),
+                    CaseSensitive.no) == 7,
+                    to!string(indexOfNeither(to!S("äDfEfffg"), to!T("ädFe"),
+                    CaseSensitive.no)));
+            }
+        }
+    }
+    }
+    );
+}
+
+/**
+    Returns the index of the first occurence of any character not an elements
+    in $(D needles) in $(D haystack). If all element of $(D haystack) are
+    element of $(D needles) $(D -1) is returned.
+
+    Params:
+    haystack = String to search for needles in.
+    needles = Strings to search for in haystack.
+        startIdx = slices haystack like this $(D haystack[startIdx .. $]). If
+        the startIdx is greater equal the length of haystack the functions
+        returns $(D -1).
+        cs = Indicates whether the comparisons are case sensitive.
+*/
+ptrdiff_t indexOfNeither(Char,Char2)(const(Char)[] haystack,
+        const(Char2)[] needles, in size_t startIdx,
+        in CaseSensitive cs = CaseSensitive.yes)
+        @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    if (startIdx < haystack.length)
+    {
+        ptrdiff_t foundIdx = indexOfAnyNeitherImpl!(true, false)(
+            haystack[startIdx .. $], needles, cs);
+        if (foundIdx != -1)
+        {
+            return foundIdx + cast(ptrdiff_t)startIdx;
+        }
+    }
+    return -1;
+}
+
+///
+@safe pure unittest
+{
+    assert(indexOfNeither("abba", "a", 2) == 2);
+    assert(indexOfNeither("def", "de", 1) == 2);
+    assert(indexOfNeither("dfefffg", "dfe", 4) == 6);
+}
+
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.indexOfNeither(index).unittest\n");
+
+    import std.exception;
+    assertCTFEable!(
+    {
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring))
+        {
+            assert(indexOfNeither(cast(S)null, to!T("a"), 1) == -1);
+            assert(indexOfNeither(to!S("def"), to!T("a"), 1) == 1,
+                to!string(indexOfNeither(to!S("def"), to!T("a"), 1)));
+
+            assert(indexOfNeither(to!S("dfeffgfff"), to!T("a"), 4,
+                CaseSensitive.no) == 4);
+            assert(indexOfNeither(to!S("def"), to!T("D"), 2,
+                CaseSensitive.no) == 2);
+            assert(indexOfNeither(to!S("ABca"), to!T("a"), 3,
+                CaseSensitive.no) == -1);
+            assert(indexOfNeither(to!S("def"), to!T("tzf"), 2,
+                CaseSensitive.no) == -1);
+            assert(indexOfNeither(to!S("DfEfffg"), to!T("dFe"), 5,
+                CaseSensitive.no) == 6);
+            if (is(S == string))
+            {
+                assert(indexOfNeither(to!S("öDfEfffg"), to!T("äDi"), 2,
+                    CaseSensitive.no) == 3, to!string(indexOfNeither(
+                    to!S("öDfEfffg"), to!T("äDi"), 2, CaseSensitive.no)));
+            }
+            else
+            {
+                assert(indexOfNeither(to!S("öDfEfffg"), to!T("äDi"), 2,
+                    CaseSensitive.no) == 2, to!string(indexOfNeither(
+                    to!S("öDfEfffg"), to!T("äDi"), 2, CaseSensitive.no)));
+            }
+        }
+    }
+    }
+    );
+}
+
+/**
+    Returns the last index of the first occurence of any character that is not
+    an elements in $(D needles) in $(D haystack). If all element of
+    $(D haystack) are element of $(D needles) $(D -1) is returned.
+
+    Params:
+    haystack = String to search for needles in.
+    needles = Strings to search for in haystack.
+        cs = Indicates whether the comparisons are case sensitive.
+*/
+ptrdiff_t lastIndexOfNeither(Char,Char2)(const(Char)[] haystack,
+        const(Char2)[] needles, in CaseSensitive cs = CaseSensitive.yes)
+        @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    return indexOfAnyNeitherImpl!(false, false)(haystack, needles, cs);
+}
+
+///
+@safe pure unittest
+{
+    assert(lastIndexOfNeither("abba", "a") == 2);
+    assert(lastIndexOfNeither("def", "f") == 1);
+}
+
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.lastIndexOfNeither.unittest\n");
+
+    import std.exception;
+    assertCTFEable!(
+    {
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring))
+        {
+            assert(lastIndexOfNeither(cast(S)null, to!T("a")) == -1);
+            assert(lastIndexOfNeither(to!S("def"), to!T("rsa")) == 2);
+            assert(lastIndexOfNeither(to!S("dfefffg"), to!T("fgh")) == 2);
+
+            ptrdiff_t oeIdx = 8;
+               if (is(S == string))
+            {
+                oeIdx = 9;
+            }
+
+            auto foundOeIdx = lastIndexOfNeither(to!S("ödfefegff"), to!T("zeg"));
+            assert(foundOeIdx == oeIdx, to!string(foundOeIdx));
+
+            assert(lastIndexOfNeither(to!S("zfeffgfsb"), to!T("FSB"),
+                CaseSensitive.no) == 5);
+            assert(lastIndexOfNeither(to!S("def"), to!T("MI6"),
+                CaseSensitive.no) == 2, to!string(lastIndexOfNeither(to!S("def"),
+                to!T("MI6"), CaseSensitive.no)));
+            assert(lastIndexOfNeither(to!S("abbadeafsb"), to!T("fSb"),
+                CaseSensitive.no) == 6, to!string(lastIndexOfNeither(
+                to!S("abbadeafsb"), to!T("fSb"), CaseSensitive.no)));
+            assert(lastIndexOfNeither(to!S("defbi"), to!T("FBI"),
+                CaseSensitive.no) == 1);
+            assert(lastIndexOfNeither(to!S("dfefffg"), to!T("NSA"),
+                CaseSensitive.no) == 6);
+            assert(lastIndexOfNeither(to!S("dfeffgfffö"), to!T("BNDabCHIJKQEPÖÖSYXÄ??ß"),
+                CaseSensitive.no) == 8, to!string(lastIndexOfNeither(to!S("dfeffgfffö"),
+                to!T("BNDabCHIJKQEPÖÖSYXÄ??ß"), CaseSensitive.no)));
+        }
+    }
+    }
+    );
+}
+
+/**
+    Returns the last index of the first occurence of any character that is not
+    an elements in $(D needles) in $(D haystack). If all element of
+    $(D haystack) are element of $(D needles) $(D -1) is returned.
+
+    Params:
+    haystack = String to search for needles in.
+    needles = Strings to search for in haystack.
+        stopIdx = slices haystack like this $(D haystack[0 .. stopIdx]) If
+        the stopIdx is greater equal the length of haystack the functions
+        returns $(D -1).
+        cs = Indicates whether the comparisons are case sensitive.
+*/
+ptrdiff_t lastIndexOfNeither(Char,Char2)(const(Char)[] haystack,
+        const(Char2)[] needles, in size_t stopIdx,
+        in CaseSensitive cs = CaseSensitive.yes)
+        @safe pure
+    if (isSomeChar!Char && isSomeChar!Char2)
+{
+    if (stopIdx < haystack.length)
+    {
+        return indexOfAnyNeitherImpl!(false, false)(haystack[0 .. stopIdx],
+            needles, cs);
+    }
+    return -1;
+}
+
+///
+@safe pure unittest
+{
+    assert(lastIndexOfNeither("def", "rsa", 3) == -1);
+    assert(lastIndexOfNeither("abba", "a", 2) == 1);
+}
+
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.lastIndexOfNeither(index).unittest\n");
+
+    import std.exception;
+    assertCTFEable!(
+    {
+    foreach (S; TypeTuple!(string, wstring, dstring))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring))
+        {
+            assert(lastIndexOfNeither(cast(S)null, to!T("a"), 1337) == -1);
+            assert(lastIndexOfNeither(to!S("def"), to!T("f")) == 1);
+            assert(lastIndexOfNeither(to!S("dfefffg"), to!T("fgh")) == 2);
+
+            ptrdiff_t oeIdx = 4;
+               if (is(S == string))
+            {
+                oeIdx = 5;
+            }
+
+            auto foundOeIdx = lastIndexOfNeither(to!S("ödfefegff"), to!T("zeg"),
+                7);
+            assert(foundOeIdx == oeIdx, to!string(foundOeIdx));
+
+            assert(lastIndexOfNeither(to!S("zfeffgfsb"), to!T("FSB"), 6,
+                CaseSensitive.no) == 5);
+            assert(lastIndexOfNeither(to!S("def"), to!T("MI6"), 2,
+                CaseSensitive.no) == 1, to!string(lastIndexOfNeither(to!S("def"),
+                to!T("MI6"), 2, CaseSensitive.no)));
+            assert(lastIndexOfNeither(to!S("abbadeafsb"), to!T("fSb"), 6,
+                CaseSensitive.no) == 5, to!string(lastIndexOfNeither(
+                to!S("abbadeafsb"), to!T("fSb"), 6, CaseSensitive.no)));
+            assert(lastIndexOfNeither(to!S("defbi"), to!T("FBI"), 3,
+                CaseSensitive.no) == 1);
+            assert(lastIndexOfNeither(to!S("dfefffg"), to!T("NSA"), 2,
+                CaseSensitive.no) == 1, to!string(lastIndexOfNeither(
+                    to!S("dfefffg"), to!T("NSA"), 2, CaseSensitive.no)));
+        }
+    }
+    }
+    );
+}
+
 
 /**
  * Returns the representation of a string, which has the same type
  * as the string except the character type is replaced by $(D ubyte),
  * $(D ushort), or $(D uint) depending on the character width.
  */
-auto representation(Char)(Char[] s) pure nothrow
+auto representation(Char)(Char[] s) @safe pure nothrow @nogc
     if (isSomeChar!Char)
 {
-    // Get representation type
-    alias U = TypeTuple!(ubyte, ushort, uint)[Char.sizeof / 2];
-
-    // const and immutable storage classes
-    static if (is(Char == immutable))
-        alias T = immutable(U);
-    else static if (is(Char == const))
-        alias T = const(U);
-    else
-        alias T = U;
-
-    // shared storage class (because shared(const(T)) is possible)
-    static if (is(Char == shared))
-        alias ST = shared(T);
-    else
-        alias ST = T;
-
-    return cast(ST[]) s;
+    alias ToRepType(T) = TypeTuple!(ubyte, ushort, uint)[T.sizeof / 2];
+    return cast(ModifyTypePreservingSTC!(ToRepType, Char)[])s;
 }
+
 ///
-unittest
+@safe pure unittest
 {
     string s = "hello";
     static assert(is(typeof(representation(s)) == immutable(ubyte)[]));
     assert(representation(s) is cast(immutable(ubyte)[]) s);
     assert(representation(s) == [0x68, 0x65, 0x6c, 0x6c, 0x6f]);
 }
-unittest
+
+@trusted pure unittest
 {
+    import std.exception;
+    import std.typecons;
+
     assertCTFEable!(
     {
     void test(Char, T)(Char[] str)
@@ -1010,41 +1807,14 @@ unittest
 
 
 /++
-    Returns a string which is identical to $(D s) except that all of its
-    characters are converted to lowercase (by preforming Unicode lowercase mapping).
-    If none of $(D s) characters were affected, then $(D s) itself is returned.
-  +/
-alias toLower = std.uni.toLower;
-/++
-    Converts $(D s) to lowercase (by performing Unicode lowercase mapping) in place.
-    For a few characters string length may increase after the transformation,
-    in such a case the function reallocates exactly once.
-    If $(D s) does not have any uppercase characters, then $(D s) is unaltered.
- +/
-alias toLowerInPlace = std.uni.toLowerInPlace;
-
-/++
-    Returns a string which is identical to $(D s) except that all of its
-    characters are converted to uppercase (by preforming Unicode uppercase mapping).
-    If none of $(D s) characters were affected, then $(D s) itself is returned.
-  +/
-alias toUpper = std.uni.toUpper;
-
-/++
-    Converts $(D s) to uppercase  (by performing Unicode uppercase mapping) in place.
-    For a few characters string length may increase after the transformation,
-    in such a case the function reallocates exactly once.
-    If $(D s) does not have any lowercase characters, then $(D s) is unaltered.
- +/
-alias toUpperInPlace = std.uni.toUpperInPlace;
-
-/++
     Capitalize the first character of $(D s) and convert the rest of $(D s)
     to lowercase.
  +/
 S capitalize(S)(S s) @trusted pure
     if (isSomeString!S)
 {
+    import std.utf : encode;
+
     Unqual!(typeof(s[0]))[] retval;
     bool changed = false;
 
@@ -1078,8 +1848,12 @@ S capitalize(S)(S s) @trusted pure
     return changed ? cast(S)retval : s;
 }
 
-unittest
+@trusted pure unittest
 {
+    import std.conv : to;
+    import std.algorithm : cmp;
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[]))
@@ -1101,7 +1875,7 @@ unittest
         assert(s2 !is s1);
         s1 = to!S("\u0131 \u0130");
         s2 = capitalize(s1);
-        assert(cmp(s2, "I \u0130") == 0);
+        assert(cmp(s2, "\u0049 \u0069") == 0);
         assert(s2 !is s1);
 
         s1 = to!S("\u017F \u0049");
@@ -1120,9 +1894,13 @@ unittest
   +/
 enum KeepTerminator : bool { no, yes }
 /// ditto
-S[] splitLines(S)(S s, KeepTerminator keepTerm = KeepTerminator.no) @safe pure
+S[] splitLines(S)(S s, in KeepTerminator keepTerm = KeepTerminator.no) @safe pure
     if (isSomeString!S)
 {
+    import std.utf : decode;
+    import std.uni : lineSep, paraSep;
+    import std.array : appender;
+
     size_t iStart = 0;
     size_t nextI = 0;
     auto retval = appender!(S[])();
@@ -1158,10 +1936,13 @@ S[] splitLines(S)(S s, KeepTerminator keepTerm = KeepTerminator.no) @safe pure
     return retval.data;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.splitLines.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("string.splitLines.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(char[], wchar[], dchar[], string, wstring, dstring))
@@ -1213,7 +1994,7 @@ unittest
     Postconditions: $(D str) and the returned value
     will share the same tail (see $(XREF array, sameTail)).
   +/
-C[] stripLeft(C)(C[] str) @safe pure
+C[] stripLeft(C)(C[] str) @safe pure @nogc
     if (isSomeChar!C)
 {
     foreach (i, dchar c; str)
@@ -1228,6 +2009,7 @@ C[] stripLeft(C)(C[] str) @safe pure
 ///
 @safe pure unittest
 {
+    import std.uni : lineSep, paraSep;
     assert(stripLeft("     hello world     ") ==
            "hello world     ");
     assert(stripLeft("\n\t\v\rhello world\n\t\v\r") ==
@@ -1249,9 +2031,10 @@ C[] stripLeft(C)(C[] str) @safe pure
     Postconditions: $(D str) and the returned value
     will share the same head (see $(XREF array, sameHead)).
   +/
-C[] stripRight(C)(C[] str) @safe pure
+C[] stripRight(C)(C[] str) @safe pure @nogc
     if (isSomeChar!C)
 {
+    import std.utf : codeLength;
     foreach_reverse (i, dchar c; str)
     {
         if (!std.uni.isWhite(c))
@@ -1264,6 +2047,7 @@ C[] stripRight(C)(C[] str) @safe pure
 ///
 @safe pure unittest
 {
+    import std.uni : lineSep, paraSep;
     assert(stripRight("     hello world     ") ==
            "     hello world");
     assert(stripRight("\n\t\v\rhello world\n\t\v\r") ==
@@ -1292,6 +2076,7 @@ C[] strip(C)(C[] str) @safe pure
 ///
 @safe pure unittest
 {
+    import std.uni : lineSep, paraSep;
     assert(strip("     hello world     ") ==
            "hello world");
     assert(strip("\n\t\v\rhello world\n\t\v\r") ==
@@ -1304,10 +2089,14 @@ C[] strip(C)(C[] str) @safe pure
            "hello world");
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.strip.unittest\n");
+    import std.conv : to;
+    import std.algorithm : equal;
 
+    debug(string) trustedPrintf("string.strip.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!( char[], const  char[],  string,
@@ -1339,6 +2128,8 @@ unittest
 
 @safe pure unittest
 {
+    import std.exception;
+    import std.range;
     assertCTFEable!(
     {
     wstring s = " ";
@@ -1358,9 +2149,10 @@ unittest
     the end of $(D str). If $(D str) does not end with any of those characters,
     then it is returned unchanged.
   +/
-C[] chomp(C)(C[] str) @safe pure
+C[] chomp(C)(C[] str) @safe pure nothrow @nogc
     if (isSomeChar!C)
 {
+    import std.uni : lineSep, paraSep;
     if (str.empty)
         return str;
 
@@ -1408,6 +2200,7 @@ C1[] chomp(C1, C2)(C1[] str, const(C2)[] delimiter) @safe pure
 
     static if (is(Unqual!C1 == Unqual!C2))
     {
+        import std.algorithm : endsWith;
         if (str.endsWith(delimiter))
             return str[0 .. $ - delimiter.length];
         return str;
@@ -1431,6 +2224,8 @@ C1[] chomp(C1, C2)(C1[] str, const(C2)[] delimiter) @safe pure
 ///
 @safe pure unittest
 {
+    import std.utf : decode;
+    import std.uni : lineSep, paraSep;
     assert(chomp(" hello world  \n\r") == " hello world  \n");
     assert(chomp(" hello world  \r\n") == " hello world  ");
     assert(chomp(" hello world  \n\n") == " hello world  \n");
@@ -1450,9 +2245,12 @@ C1[] chomp(C1, C2)(C1[] str, const(C2)[] delimiter) @safe pure
 
 unittest
 {
-    debug(string) printf("string.chomp.unittest\n");
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.chomp.unittest\n");
     string s;
 
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(char[], wchar[], dchar[], string, wstring, dstring))
@@ -1500,12 +2298,15 @@ C1[] chompPrefix(C1, C2)(C1[] str, C2[] delimiter) @safe pure
 {
     static if (is(Unqual!C1 == Unqual!C2))
     {
+        import std.algorithm : startsWith;
         if (str.startsWith(delimiter))
             return str[delimiter.length .. $];
         return str;
     }
     else
     {
+        import std.utf : decode;
+    
         auto orig = str;
         size_t index = 0;
 
@@ -1530,6 +2331,9 @@ C1[] chompPrefix(C1, C2)(C1[] str, C2[] delimiter) @safe pure
 
 /* @safe */ pure unittest
 {
+    import std.conv : to;
+    import std.algorithm : equal;
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(char[], wchar[], dchar[], string, wstring, dstring))
@@ -1580,8 +2384,12 @@ S chop(S)(S str) @safe pure
 
 unittest
 {
-    debug(string) printf("string.chop.unittest\n");
+    import std.conv : to;
+    import std.algorithm : equal;
 
+    debug(string) trustedPrintf("string.chop.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(char[], wchar[], dchar[], string, wstring, dstring))
@@ -1606,6 +2414,9 @@ unittest
 S leftJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
     if (isSomeString!S)
 {
+    import std.utf : canSearchInCodeUnits;
+    import std.conv : to;
+
     alias C = ElementEncodingType!S;
 
     if (canSearchInCodeUnits!C(fillChar))
@@ -1641,6 +2452,9 @@ S leftJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
 S rightJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
     if (isSomeString!S)
 {
+    import std.utf : canSearchInCodeUnits;
+    import std.conv : to;
+
     alias C = ElementEncodingType!S;
 
     if (canSearchInCodeUnits!C(fillChar))
@@ -1676,6 +2490,9 @@ S rightJustify(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
 S center(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
     if (isSomeString!S)
 {
+    import std.utf : canSearchInCodeUnits;
+    import std.conv : to;
+
     alias C = ElementEncodingType!S;
 
     if (canSearchInCodeUnits!C(fillChar))
@@ -1706,10 +2523,13 @@ S center(S)(S s, size_t width, dchar fillChar = ' ') @trusted pure
     }
 }
 
-unittest
+@trusted pure unittest
 {
-    debug(string) printf("string.justify.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("string.justify.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(char[], wchar[], dchar[], string, wstring, dstring))
@@ -1748,6 +2568,9 @@ unittest
 S detab(S)(S s, size_t tabSize = 8) @trusted pure
     if (isSomeString!S)
 {
+    import std.utf : encode;
+    import std.uni : lineSep, paraSep;
+
     assert(tabSize > 0);
     alias C = Unqual!(typeof(s[0]));
     bool changes = false;
@@ -1800,10 +2623,14 @@ S detab(S)(S s, size_t tabSize = 8) @trusted pure
     return changes ? cast(S) result : s;
 }
 
-unittest
+@trusted pure unittest
 {
-    debug(string) printf("string.detab.unittest\n");
+    import std.conv : to;
+    import std.algorithm : cmp;
 
+    debug(string) trustedPrintf("string.detab.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!(char[], wchar[], dchar[], string, wstring, dstring))
@@ -1834,6 +2661,10 @@ unittest
 S entab(S)(S s, size_t tabSize = 8) @trusted pure
     if (isSomeString!S)
 {
+    import std.utf : encode;
+    import std.uni : lineSep, paraSep;
+    import std.exception : assumeUnique;
+
     bool changes = false;
     alias C = Unqual!(typeof(s[0]));
     C[] result;
@@ -1927,10 +2758,13 @@ S entab(S)(S s, size_t tabSize = 8) @trusted pure
     return changes ? assumeUnique(result) : s;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.entab.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("string.entab.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     assert(entab(cast(string) null) is null);
@@ -1986,10 +2820,11 @@ unittest
         toRemove   = The characters to remove from the string.
   +/
 C1[] translate(C1, C2 = immutable char)(C1[] str,
-                                        dchar[dchar] transTable,
+                                        in dchar[dchar] transTable,
                                         const(C2)[] toRemove = null) @safe pure
     if (isSomeChar!C1 && isSomeChar!C2)
 {
+    import std.array : appender;
     auto buffer = appender!(C1[])();
     translateImpl(str, transTable, toRemove, buffer);
     return buffer.data;
@@ -2007,8 +2842,22 @@ C1[] translate(C1, C2 = immutable char)(C1[] str,
     assert(translate("hello world", transTable2) == "h5llorange worangerld");
 }
 
-/* @safe */ pure unittest
+@safe pure unittest // issue 13018
 {
+    immutable dchar[dchar] transTable1 = ['e' : '5', 'o' : '7', '5': 'q'];
+    assert(translate("hello world", transTable1) == "h5ll7 w7rld");
+
+    assert(translate("hello world", transTable1, "low") == "h5 rd");
+
+    immutable string[dchar] transTable2 = ['e' : "5", 'o' : "orange"];
+    assert(translate("hello world", transTable2) == "h5llorange worangerld");
+}
+
+@trusted pure unittest
+{
+    import std.conv : to;
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!( char[], const( char)[], immutable( char)[],
@@ -2029,22 +2878,17 @@ C1[] translate(C1, C2 = immutable char)(C1[] str,
                                wchar[], const(wchar)[], immutable(wchar)[],
                                dchar[], const(dchar)[], immutable(dchar)[]))
         {
-            assert(translate(to!S("hello world"),
-                             cast(dchar[dchar])['h' : 'q', 'l' : '5'],
-                             to!T("r")) ==
-                   to!S("qe55o wo5d"));
-            assert(translate(to!S("hello world"),
-                             cast(dchar[dchar])['h' : 'q', 'l' : '5'],
-                             to!T("helo")) ==
-                   to!S(" wrd"));
-            assert(translate(to!S("hello world"),
-                             cast(dchar[dchar])['h' : 'q', 'l' : '5'],
-                             to!T("q5")) ==
-                   to!S("qe55o wor5d"));
-            assert(translate(to!S("hello \U00010143 world"),
-                             cast(dchar[dchar])['o' : '0', '\U00010143' : 'o'],
-                             to!T("\U00010143 ")) ==
-                   to!S("hell0w0rld"));
+            foreach(R; TypeTuple!(dchar[dchar], const dchar[dchar],
+                        immutable dchar[dchar]))
+            {
+                R tt = ['h' : 'q', 'l' : '5'];
+                assert(translate(to!S("hello world"), tt, to!T("r"))
+                    == to!S("qe55o wo5d"));
+                assert(translate(to!S("hello world"), tt, to!T("helo"))
+                    == to!S(" wrd"));
+                assert(translate(to!S("hello world"), tt, to!T("q5"))
+                    == to!S("qe55o wor5d"));
+            }
         }
 
         auto s = to!S("hello world");
@@ -2056,17 +2900,21 @@ C1[] translate(C1, C2 = immutable char)(C1[] str,
 
 /++ Ditto +/
 C1[] translate(C1, S, C2 = immutable char)(C1[] str,
-                                           S[dchar] transTable,
+                                           in S[dchar] transTable,
                                            const(C2)[] toRemove = null) @safe pure
     if (isSomeChar!C1 && isSomeString!S && isSomeChar!C2)
 {
+    import std.array : appender;
     auto buffer = appender!(C1[])();
     translateImpl(str, transTable, toRemove, buffer);
     return buffer.data;
 }
 
-/* @safe */ pure unittest
+@trusted pure unittest
 {
+    import std.conv : to;
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TypeTuple!( char[], const( char)[], immutable( char)[],
@@ -2091,20 +2939,22 @@ C1[] translate(C1, S, C2 = immutable char)(C1[] str,
                                wchar[], const(wchar)[], immutable(wchar)[],
                                dchar[], const(dchar)[], immutable(dchar)[]))
         {
-            assert(translate(to!S("hello world"), ['h' : "yellow", 'l' : "42"], to!T("r")) ==
-                   to!S("yellowe4242o wo42d"));
-            assert(translate(to!S("hello world"), ['h' : "yellow", 'l' : "42"], to!T("helo")) ==
-                   to!S(" wrd"));
-            assert(translate(to!S("hello world"), ['h' : "yellow", 'l' : "42"], to!T("y42")) ==
-                   to!S("yellowe4242o wor42d"));
-            assert(translate(to!S("hello \U00010143 world"),
-                             ['o' : "owl", '\U00010143' : "\n"],
-                             to!T("\U00010143 ")) ==
-                   to!S("hellowlwowlrld"));
-            assert(translate(to!S("hello world"), ['h' : "yellow", 'l' : "42"], to!T("hello world")) ==
-                   to!S(""));
-            assert(translate(to!S("hello world"), ['h' : "yellow", 'l' : "42"], to!T("42")) ==
-                   to!S("yellowe4242o wor42d"));
+
+            foreach(R; TypeTuple!(string[dchar], const string[dchar],
+                        immutable string[dchar]))
+            {
+                R tt = ['h' : "yellow", 'l' : "42"];
+                assert(translate(to!S("hello world"), tt, to!T("r")) ==
+                       to!S("yellowe4242o wo42d"));
+                assert(translate(to!S("hello world"), tt, to!T("helo")) ==
+                       to!S(" wrd"));
+                assert(translate(to!S("hello world"), tt, to!T("y42")) ==
+                       to!S("yellowe4242o wor42d"));
+                assert(translate(to!S("hello world"), tt, to!T("hello world")) ==
+                       to!S(""));
+                assert(translate(to!S("hello world"), tt, to!T("42")) ==
+                       to!S("yellowe4242o wor42d"));
+            }
         }
 
         auto s = to!S("hello world");
@@ -2125,7 +2975,7 @@ C1[] translate(C1, S, C2 = immutable char)(C1[] str,
         buffer     = An output range to write the contents to.
   +/
 void translate(C1, C2 = immutable char, Buffer)(C1[] str,
-                                        dchar[dchar] transTable,
+                                        in dchar[dchar] transTable,
                                         const(C2)[] toRemove,
                                         Buffer buffer)
     if (isSomeChar!C1 && isSomeChar!C2 && isOutputRange!(Buffer, C1))
@@ -2136,6 +2986,7 @@ void translate(C1, C2 = immutable char, Buffer)(C1[] str,
 ///
 @safe pure unittest
 {
+    import std.array : appender;
     dchar[dchar] transTable1 = ['e' : '5', 'o' : '7', '5': 'q'];
     auto buffer = appender!(dchar[])();
     translate("hello world", transTable1, null, buffer);
@@ -2151,9 +3002,27 @@ void translate(C1, C2 = immutable char, Buffer)(C1[] str,
     assert(buffer.data == "h5llorange worangerld");
 }
 
+@safe pure unittest // issue 13018
+{
+    import std.array : appender;
+    immutable dchar[dchar] transTable1 = ['e' : '5', 'o' : '7', '5': 'q'];
+    auto buffer = appender!(dchar[])();
+    translate("hello world", transTable1, null, buffer);
+    assert(buffer.data == "h5ll7 w7rld");
+
+    buffer.clear();
+    translate("hello world", transTable1, "low", buffer);
+    assert(buffer.data == "h5 rd");
+
+    buffer.clear();
+    immutable string[dchar] transTable2 = ['e' : "5", 'o' : "orange"];
+    translate("hello world", transTable2, null, buffer);
+    assert(buffer.data == "h5llorange worangerld");
+}
+
 /++ Ditto +/
 void translate(C1, S, C2 = immutable char, Buffer)(C1[] str,
-                                                   S[dchar] transTable,
+                                                   in S[dchar] transTable,
                                                    const(C2)[] toRemove,
                                                    Buffer buffer)
     if (isSomeChar!C1 && isSomeString!S && isSomeChar!C2 && isOutputRange!(Buffer, S))
@@ -2248,6 +3117,7 @@ body
 string makeTrans(in char[] from, in char[] to) @trusted pure nothrow
 in
 {
+    import std.ascii : isASCII;
     assert(from.length == to.length);
     assert(from.length <= 256);
     foreach (char c; from)
@@ -2257,6 +3127,8 @@ in
 }
 body
 {
+    import std.exception : assumeUnique;
+
     char[] transTable = new char[256];
 
     foreach (i; 0 .. transTable.length)
@@ -2278,6 +3150,9 @@ body
 
 @safe pure unittest
 {
+    import std.conv : to;
+
+    import std.exception;
     assertCTFEable!(
     {
     foreach (C; TypeTuple!(char, const char, immutable char))
@@ -2325,7 +3200,8 @@ body
         toRemove   = The characters to remove from the string.
         buffer     = An output range to write the contents to.
   +/
-void translate(C = immutable char, Buffer)(in char[] str, in char[] transTable, in char[] toRemove, Buffer buffer)
+void translate(C = immutable char, Buffer)(in char[] str, in char[] transTable,
+        in char[] toRemove, Buffer buffer) @trusted pure
     if (is(Unqual!C == char) && isOutputRange!(Buffer, char))
 in
 {
@@ -2344,6 +3220,7 @@ body
 ///
 @safe pure unittest
 {
+    import std.array : appender;
     auto buffer = appender!(char[])();
     auto transTable1 = makeTrans("eo5", "57q");
     translate("hello world", transTable1, null, buffer);
@@ -2354,7 +3231,9 @@ body
     assert(buffer.data == "h5 rd");
 }
 
-private void translateImplAscii(C = immutable char, Buffer)(in char[] str, in char[] transTable, ref bool[256] remTable, Buffer buffer, in char[] toRemove = null)
+private void translateImplAscii(C = immutable char, Buffer)(in char[] str,
+        in char[] transTable, ref bool[256] remTable, Buffer buffer,
+        in char[] toRemove = null) @trusted pure
 {
     static if (isOutputRange!(Buffer, char))
     {
@@ -2400,12 +3279,16 @@ private void translateImplAscii(C = immutable char, Buffer)(in char[] str, in ch
  */
 string format(Char, Args...)(in Char[] fmt, Args args)
 {
+    import std.format : formattedWrite, FormatException;
+    import std.array : appender;
     auto w = appender!string();
     auto n = formattedWrite(w, fmt, args);
     version (all)
     {
         // In the future, this check will be removed to increase consistency
         // with formattedWrite
+        import std.conv : text;
+        import std.exception : enforce;
         enforce(n == args.length, new FormatException(
             text("Orphan format arguments: args[", n, "..", args.length, "]")));
     }
@@ -2414,8 +3297,12 @@ string format(Char, Args...)(in Char[] fmt, Args args)
 
 unittest
 {
-    debug(string) printf("std.string.format.unittest\n");
+    import std.format;
+    import core.exception;
 
+    debug(string) trustedPrintf("std.string.format.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
 //  assert(format(null) == "");
@@ -2460,6 +3347,10 @@ unittest
  */
 char[] sformat(Char, Args...)(char[] buf, in Char[] fmt, Args args)
 {
+    import core.exception : onRangeError;
+    import std.utf : encode;
+    import std.format : formattedWrite, FormatException;
+
     size_t i;
 
     struct Sink
@@ -2499,6 +3390,8 @@ char[] sformat(Char, Args...)(char[] buf, in Char[] fmt, Args args)
     {
         // In the future, this check will be removed to increase consistency
         // with formattedWrite
+        import std.conv : text;
+        import std.exception : enforce;
         enforce(n == args.length, new FormatException(
             text("Orphan format arguments: args[", n, "..", args.length, "]")));
     }
@@ -2507,8 +3400,12 @@ char[] sformat(Char, Args...)(char[] buf, in Char[] fmt, Args args)
 
 unittest
 {
-    debug(string) printf("std.string.sformat.unittest\n");
+    import core.exception;
+    import std.format;
 
+    debug(string) trustedPrintf("std.string.sformat.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     char[10] buf;
@@ -2525,55 +3422,6 @@ unittest
     assertThrown!FormatException(sformat(buf[], "foo %s", 123, 456));
 
     assert(sformat(buf[], "%s %s %s", "c"c, "w"w, "d"d) == "c w d");
-    });
-}
-
-// Explicitly undocumented. It will be removed in July 2014.
-deprecated("Please use std.string.format instead.") alias xformat = format;
-
-deprecated unittest
-{
-    debug(string) printf("std.string.xformat.unittest\n");
-
-    assertCTFEable!(
-    {
-//  assert(xformat(null) == "");
-    assert(xformat("foo") == "foo");
-    assert(xformat("foo%%") == "foo%");
-    assert(xformat("foo%s", 'C') == "fooC");
-    assert(xformat("%s foo", "bar") == "bar foo");
-    assert(xformat("%s foo %s", "bar", "abc") == "bar foo abc");
-    assert(xformat("foo %d", -123) == "foo -123");
-    assert(xformat("foo %d", 123) == "foo 123");
-
-    assertThrown!FormatException(xformat("foo %s"));
-    assertThrown!FormatException(xformat("foo %s", 123, 456));
-    });
-}
-
-// Explicitly undocumented. It will be removed in July 2014.
-deprecated("Please use std.string.sformat instead.") alias xsformat = sformat;
-
-deprecated unittest
-{
-    debug(string) printf("std.string.xsformat.unittest\n");
-
-    assertCTFEable!(
-    {
-    char[10] buf;
-
-    assert(xsformat(buf[], "foo") == "foo");
-    assert(xsformat(buf[], "foo%%") == "foo%");
-    assert(xsformat(buf[], "foo%s", 'C') == "fooC");
-    assert(xsformat(buf[], "%s foo", "bar") == "bar foo");
-    assertThrown!RangeError(xsformat(buf[], "%s foo %s", "bar", "abc"));
-    assert(xsformat(buf[], "foo %d", -123) == "foo -123");
-    assert(xsformat(buf[], "foo %d", 123) == "foo 123");
-
-    assertThrown!FormatException(xsformat(buf[], "foo %s"));
-    assertThrown!FormatException(xsformat(buf[], "foo %s", 123, 456));
-
-    assert(xsformat(buf[], "%s %s %s", "c"c, "w"w, "d"d) == "c w d");
     });
 }
 
@@ -2597,7 +3445,7 @@ deprecated unittest
  *  to be more like regular expression character classes.
  */
 
-bool inPattern(S)(dchar c, in S pattern) @safe pure if (isSomeString!S)
+bool inPattern(S)(dchar c, in S pattern) @safe pure @nogc if (isSomeString!S)
 {
     bool result = false;
     int range = 0;
@@ -2630,10 +3478,13 @@ bool inPattern(S)(dchar c, in S pattern) @safe pure if (isSomeString!S)
 }
 
 
-unittest
+@safe pure @nogc unittest
 {
-    debug(string) printf("std.string.inPattern.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("std.string.inPattern.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     assert(inPattern('x', "x") == 1);
@@ -2663,7 +3514,7 @@ unittest
  * See if character c is in the intersection of the patterns.
  */
 
-bool inPattern(S)(dchar c, S[] patterns) @safe pure if (isSomeString!S)
+bool inPattern(S)(dchar c, S[] patterns) @safe pure @nogc if (isSomeString!S)
 {
     foreach (string pattern; patterns)
     {
@@ -2680,7 +3531,7 @@ bool inPattern(S)(dchar c, S[] patterns) @safe pure if (isSomeString!S)
  * Count characters in s that match pattern.
  */
 
-size_t countchars(S, S1)(S s, in S1 pattern) @safe pure if (isSomeString!S && isSomeString!S1)
+size_t countchars(S, S1)(S s, in S1 pattern) @safe pure @nogc if (isSomeString!S && isSomeString!S1)
 {
     size_t count;
     foreach (dchar c; s)
@@ -2690,10 +3541,13 @@ size_t countchars(S, S1)(S s, in S1 pattern) @safe pure if (isSomeString!S && is
     return count;
 }
 
-unittest
+@safe pure @nogc unittest
 {
-    debug(string) printf("std.string.count.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("std.string.count.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     assert(countchars("abc", "a-c") == 3);
@@ -2708,6 +3562,8 @@ unittest
 
 S removechars(S)(S s, in S pattern) @safe pure if (isSomeString!S)
 {
+    import std.utf : encode;
+
     Unqual!(typeof(s[0]))[] r;
     bool changed = false;
 
@@ -2733,10 +3589,13 @@ S removechars(S)(S s, in S pattern) @safe pure if (isSomeString!S)
         return s;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("std.string.removechars.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("std.string.removechars.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     assert(removechars("abc", "a-c").length == 0);
@@ -2755,6 +3614,8 @@ unittest
 
 S squeeze(S)(S s, in S pattern = null)
 {
+    import std.utf : encode;
+ 
     Unqual!(typeof(s[0]))[] r;
     dchar lastc;
     size_t lasti;
@@ -2794,10 +3655,13 @@ S squeeze(S)(S s, in S pattern = null)
     return changed ? ((r is null) ? s[0 .. lasti] : cast(S) r) : s;
 }
 
-unittest
+@trusted pure unittest
 {
-    debug(string) printf("std.string.squeeze.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("std.string.squeeze.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     string s;
@@ -2820,21 +3684,12 @@ unittest
  s[pos..$]). Returns the slice from the beginning of the original
  (before update) string up to, and excluding, $(D_PARAM pos).
 
- Example:
- ---
- string s = "123abc";
- string t = munch(s, "0123456789");
- assert(t == "123" && s == "abc");
- t = munch(s, "0123456789");
- assert(t == "" && s == "abc");
- ---
-
 The $(D_PARAM munch) function is mostly convenient for skipping
 certain category of characters (e.g. whitespace) when parsing
 strings. (In such cases, the return value is not used.)
  */
 
-S1 munch(S1, S2)(ref S1 s, S2 pattern)
+S1 munch(S1, S2)(ref S1 s, S2 pattern) @safe pure @nogc
 {
     size_t j = s.length;
     foreach (i, dchar c; s)
@@ -2849,7 +3704,17 @@ S1 munch(S1, S2)(ref S1 s, S2 pattern)
     return s[0 .. j];
 }
 
-@safe pure unittest
+///
+@safe pure @nogc unittest
+{
+    string s = "123abc";
+    string t = munch(s, "0123456789");
+    assert(t == "123" && s == "abc");
+    t = munch(s, "0123456789");
+    assert(t == "" && s == "abc");
+}
+
+@safe pure @nogc unittest
 {
     string s = "123€abc";
     string t = munch(s, "0123456789");
@@ -2870,6 +3735,8 @@ S1 munch(S1, S2)(ref S1 s, S2 pattern)
 
 S succ(S)(S s) @safe pure if (isSomeString!S)
 {
+    import std.ascii : isAlphaNum;
+
     if (s.length && std.ascii.isAlphaNum(s[$ - 1]))
     {
         auto r = s.dup;
@@ -2912,10 +3779,22 @@ S succ(S)(S s) @safe pure if (isSomeString!S)
     return s;
 }
 
-unittest
+///
+@safe pure unittest
 {
-    debug(string) printf("std.string.succ.unittest\n");
+    assert(succ("1") == "2");
+    assert(succ("9") == "10");
+    assert(succ("999") == "1000");
+    assert(succ("zz99") == "aaa00");
+}
 
+@safe pure unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("std.string.succ.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     assert(succ(string.init) is null);
@@ -2970,6 +3849,10 @@ unittest
 C1[] tr(C1, C2, C3, C4 = immutable char)
        (C1[] str, const(C2)[] from, const(C3)[] to, const(C4)[] modifiers = null)
 {
+    import std.conv : conv_to = to;
+    import std.utf : decode;
+    import std.array : appender;
+
     bool mod_c;
     bool mod_d;
     bool mod_s;
@@ -2986,7 +3869,7 @@ C1[] tr(C1, C2, C3, C4 = immutable char)
     }
 
     if (to.empty && !mod_d)
-        to = std.conv.to!(typeof(to))(from);
+        to = conv_to!(typeof(to))(from);
 
     auto result = appender!(C1[])();
     bool modified;
@@ -3079,8 +3962,10 @@ C1[] tr(C1, C2, C3, C4 = immutable char)
 
 unittest
 {
-    debug(string) printf("std.string.tr.unittest\n");
-    import std.algorithm;
+    import std.conv : to;
+
+    debug(string) trustedPrintf("std.string.tr.unittest\n");
+    import std.algorithm : equal;
 
     // Complete list of test types; too slow to test'em all
     // alias TestTypes = TypeTuple!(
@@ -3091,6 +3976,7 @@ unittest
     // Reduced list of test types
     alias TestTypes = TypeTuple!(char[], const(wchar)[], immutable(dchar)[]);
 
+    import std.exception;
     assertCTFEable!(
     {
     foreach (S; TestTypes)
@@ -3169,6 +4055,8 @@ unittest
 
 bool isNumeric(const(char)[] s, in bool bAllowSep = false) @safe pure
 {
+    import std.algorithm : among;
+
     immutable iLen = s.length;
     if (iLen == 0)
         return false;
@@ -3178,7 +4066,7 @@ bool isNumeric(const(char)[] s, in bool bAllowSep = false) @safe pure
             ("nan", "nani", "nan+nani", "inf", "-inf"))
         return true;
 
-    immutable j = s[0].among!('-', '+') != 0;
+    immutable j = s[0].among!('-', '+')() != 0;
     bool bDecimalPoint, bExponent, bComplex, sawDigits;
 
     for (size_t i = j; i < iLen; i++)
@@ -3207,14 +4095,14 @@ bool isNumeric(const(char)[] s, in bool bAllowSep = false) @safe pure
         }
 
         // Allow only one exponent per number
-        if (c.among!('e', 'E'))
+        if (c.among!('e', 'E')())
         {
             // A 2nd exponent found, return not a number
             if (bExponent || i + 1 >= iLen)
                 return false;
             // Look forward for the sign, and if
             // missing then this is not a number.
-            if (!s[i + 1].among!('-', '+'))
+            if (!s[i + 1].among!('-', '+')())
                 return false;
             bExponent = true;
             i++;
@@ -3256,25 +4144,25 @@ bool isNumeric(const(char)[] s, in bool bAllowSep = false) @safe pure
             if (!sawDigits)
                 return false;
             // Integer Whole Number
-            if (c.among!('u', 'l', 'U', 'L') &&
+            if (c.among!('u', 'l', 'U', 'L')() &&
                    (!bDecimalPoint && !bExponent && !bComplex))
                 return true;
             // Check to see if the last character in the string
             // is the required 'i' character
             if (bComplex)
-                return c.among!('i', 'I') != 0;
+                return c.among!('i', 'I')() != 0;
             // Floating-Point Number
-            return c.among!('l', 'L', 'f', 'F', 'i', 'I') != 0;
+            return c.among!('l', 'L', 'f', 'F', 'i', 'I')() != 0;
         }
         // Check if separators are allowed to be in the numeric string
-        if (!bAllowSep || !c.among!('_', ','))
+        if (!bAllowSep || !c.among!('_', ',')())
             return false;
     }
 
     return sawDigits;
 }
 
-unittest
+@safe pure unittest
 {
     assert(!isNumeric("F"));
     assert(!isNumeric("L"));
@@ -3292,11 +4180,13 @@ unittest
     assert(!isNumeric("e+f"));
 }
 
-
-unittest
+@trusted unittest
 {
-    debug(string) printf("isNumeric(in string, bool = false).unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("isNumeric(in string, bool = false).unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     // Test the isNumeric(in string) function
@@ -3372,7 +4262,8 @@ unittest
  *  but this one is the standard one.
  */
 
-char[] soundex(const(char)[] string, char[] buffer = null) @safe pure nothrow
+char[] soundex(const(char)[] string, char[] buffer = null)
+    @safe pure nothrow
 in
 {
     assert(!buffer.ptr || buffer.length >= 4);
@@ -3443,6 +4334,7 @@ body
 
 @safe pure nothrow unittest
 {
+    import std.exception;
     assertCTFEable!(
     {
     char[4] buffer;
@@ -3525,10 +4417,13 @@ body
 
 string[string] abbrev(string[] values) @safe pure
 {
+    import std.algorithm : sort;
+
     string[string] result;
 
     // Make a copy when sorting so we follow COW principles.
-    values = values.dup.sort;   // @@@BUG@@@ not CTFEable
+    values = values.dup;
+    sort(values);
 
     size_t values_length = values.length;
     size_t lasti = values_length;
@@ -3567,13 +4462,16 @@ string[string] abbrev(string[] values) @safe pure
     return result;
 }
 
-unittest
+@trusted pure unittest
 {
-    debug(string) printf("string.abbrev.unittest\n");
+    import std.conv : to;
+    import std.algorithm : sort;
 
-    // @@@BUG@@@ Built-in arr.sort is not CTFEable
-    //assertCTFEable!(
-    //{
+    debug(string) trustedPrintf("string.abbrev.unittest\n");
+
+    import std.exception;
+    assertCTFEable!(
+    {
     string[] values;
     values ~= "hello";
     values ~= "hello";
@@ -3583,7 +4481,7 @@ unittest
 
     r = abbrev(values);
     auto keys = r.keys.dup;
-    keys.sort;
+    sort(keys);
 
     assert(keys.length == 4);
     assert(keys[0] == "he");
@@ -3595,17 +4493,24 @@ unittest
     assert(r[keys[1]] == "hello");
     assert(r[keys[2]] == "hello");
     assert(r[keys[3]] == "hello");
-    //});
+    });
 }
 
 
 /******************************************
- * Compute column number after string if string starts in the
- * leftmost column, which is numbered starting from 0.
+ * Compute _column number at the end of the printed form of the string,
+ * assuming the string starts in the leftmost _column, which is numbered
+ * starting from 0.
+ *
+ * Tab characters are expanded into enough spaces to bring the _column number
+ * to the next multiple of tabsize, and carriage returns and newlines reset the
+ * running _column number back to 0.
  */
 
-size_t column(S)(S str, size_t tabsize = 8) @safe pure if (isSomeString!S)
+size_t column(S)(S str, in size_t tabsize = 8) @safe pure @nogc if (isSomeString!S)
 {
+    import std.uni : lineSep, paraSep;
+
     size_t column;
 
     foreach (dchar c; str)
@@ -3631,10 +4536,37 @@ size_t column(S)(S str, size_t tabsize = 8) @safe pure if (isSomeString!S)
     return column;
 }
 
+///
 unittest
 {
-    debug(string) printf("string.column.unittest\n");
+    assert(column("1234 ") == 5);
 
+    // Tab stops are set at 8 spaces by default; tab characters insert enough
+    // spaces to bring the column position to the next multiple of 8.
+    assert(column("\t") == 8);
+    assert(column("1\t") == 8);
+    assert(column("\t1") == 9);
+    assert(column("123\t") == 8);
+
+    // Other tab widths are possible by specifying it explicitly:
+    assert(column("\t", 4) == 4);
+    assert(column("1\t", 4) == 4);
+    assert(column("\t1", 4) == 5);
+    assert(column("123\t", 4) == 4);
+
+    // Newlines and carriage returns reset the column number.
+    assert(column("abc\n") == 0);
+    assert(column("abc\n1") == 1);
+    assert(column("abcdefg\r1234") == 4);
+}
+
+@safe @nogc unittest
+{
+    import std.conv : to;
+
+    debug(string) trustedPrintf("string.column.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     assert(column(string.init) == 0);
@@ -3663,8 +4595,8 @@ unittest
  *  The resulting paragraph.
  */
 
-S wrap(S)(S s, size_t columns = 80, S firstindent = null,
-        S indent = null, size_t tabsize = 8) @safe pure if (isSomeString!S)
+S wrap(S)(S s, in size_t columns = 80, S firstindent = null,
+        S indent = null, in size_t tabsize = 8) @safe pure if (isSomeString!S)
 {
     typeof(s.dup) result;
     int spaces;
@@ -3728,10 +4660,13 @@ S wrap(S)(S s, size_t columns = 80, S firstindent = null,
     return result;
 }
 
-unittest
+@safe pure unittest
 {
-    debug(string) printf("string.wrap.unittest\n");
+    import std.conv : to;
 
+    debug(string) trustedPrintf("string.wrap.unittest\n");
+
+    import std.exception;
     assertCTFEable!(
     {
     assert(wrap(string.init) == "\n");
@@ -3754,29 +4689,7 @@ unittest
  * the input from being outdented.
  *
  * Works at compile-time.
- *
- * Example:
- * ---
- * writeln(q{
- *     import std.stdio;
- *     void main() {
- *         writeln("Hello");
- *     }
- * }.outdent());
- * ---
- *
- * Output:
- * ---
- *
- * import std.stdio;
- * void main() {
- *     writeln("Hello");
- * }
- *
- * ---
- *
  */
-
 S outdent(S)(S str) @safe pure if(isSomeString!S)
 {
     return str.splitLines(KeepTerminator.yes).outdent().join();
@@ -3785,6 +4698,8 @@ S outdent(S)(S str) @safe pure if(isSomeString!S)
 /// ditto
 S[] outdent(S)(S[] lines) @safe pure if(isSomeString!S)
 {
+    import std.algorithm : startsWith;
+
     if (lines.empty)
     {
         return null;
@@ -3792,17 +4707,17 @@ S[] outdent(S)(S[] lines) @safe pure if(isSomeString!S)
 
     static S leadingWhiteOf(S str)
     {
-        return str[ 0 .. $-find!(not!(std.uni.isWhite))(str).length ];
+        return str[ 0 .. $ - stripLeft(str).length ];
     }
 
     S shortestIndent;
-    foreach (i, line; lines)
+    foreach (ref line; lines)
     {
-        auto stripped = __ctfe? line.ctfe_strip() : line.strip();
+        auto stripped = line.stripLeft();
 
         if (stripped.empty)
         {
-            lines[i] = line[line.chomp().length..$];
+            line = line[line.chomp().length .. $];
         }
         else
         {
@@ -3819,58 +4734,52 @@ S[] outdent(S)(S[] lines) @safe pure if(isSomeString!S)
         }
     }
 
-    foreach (i; 0..lines.length)
+    foreach (ref line; lines)
     {
-        auto stripped = __ctfe? lines[i].ctfe_strip() : lines[i].strip();
+        auto stripped = line.stripLeft();
 
         if (stripped.empty)
         {
             // Do nothing
         }
-        else if (lines[i].startsWith(shortestIndent))
+        else if (line.startsWith(shortestIndent))
         {
-            lines[i] = lines[i][shortestIndent.length..$];
+            line = line[shortestIndent.length .. $];
         }
         else
         {
-            if (__ctfe)
-                assert(false, "outdent: Inconsistent indentation");
-            else
-                throw new StringException("outdent: Inconsistent indentation");
+            throw new StringException("outdent: Inconsistent indentation");
         }
     }
 
     return lines;
 }
 
-// TODO: Remove this and use std.string.strip when retro() becomes ctfe-able.
-private S ctfe_strip(S)(S str) if(isSomeString!(Unqual!S))
+///
+@safe pure unittest
 {
-    return str.stripLeft().ctfe_stripRight();
+    enum pretty = q{
+       import std.stdio;
+       void main() {
+           writeln("Hello");
+       }
+    }.outdent();
+
+    enum ugly = q{
+import std.stdio;
+void main() {
+    writeln("Hello");
+}
+};
+
+    assert(pretty == ugly);
 }
 
-// TODO: Remove this and use std.string.strip when retro() becomes ctfe-able.
-private S ctfe_stripRight(S)(S str) if(isSomeString!(Unqual!S))
+@safe pure unittest
 {
-    size_t endIndex = 0;
-    size_t prevIndex = str.length;
+    import std.conv : to;
 
-    foreach_reverse (i, dchar ch; str)
-    {
-        if (!std.uni.isWhite(ch))
-        {
-            endIndex = prevIndex;
-            break;
-        }
-        prevIndex = i;
-    }
-
-    return str[0..endIndex];
-}
-
-unittest
-{
-    debug(string) printf("string.outdent.unittest\n");
+    debug(string) trustedPrintf("string.outdent.unittest\n");
 
     template outdent_testStr(S)
     {
@@ -3896,13 +4805,9 @@ unittest
 ";
     }
 
+    import std.exception;
     assertCTFEable!(
     {
-    static assert(ctfe_strip(" \tHi \r\n") == "Hi");
-    static assert(ctfe_strip(" \tHi&copy;\u2028 \r\n") == "Hi&copy;");
-    static assert(ctfe_strip("Hi")         == "Hi");
-    static assert(ctfe_strip(" \t \r\n")   == "");
-    static assert(ctfe_strip("")           == "");
 
     foreach (S; TypeTuple!(string, wstring, dstring))
     {
@@ -3956,6 +4861,75 @@ unittest
         enum expected6 = "\r\n\r\n\u2028\u2029";
         assert(testStr6.outdent() == expected6);
         static assert(testStr6.outdent() == expected6);
+
+        enum testStr7 = " a \n b ";
+        enum expected7 = "a \nb ";
+        assert(testStr7.outdent() == expected7);
+        static assert(testStr7.outdent() == expected7);
     }
     });
+}
+
+/** Assume the given array of integers $(D arr) is a well-formed UTF string and
+return it typed as a UTF string.
+
+$(D ubyte) becomes $(D char), $(D ushort) becomes $(D wchar) and $(D uint)
+becomes $(D dchar). Type qualifiers are preserved.
+
+See_Also: $(LREF representation)
+*/
+auto assumeUTF(T)(T[] arr) pure
+    if(staticIndexOf!(Unqual!T, ubyte, ushort, uint) != -1)
+{
+    import std.utf : validate;
+    alias ToUTFType(U) = TypeTuple!(char, wchar, dchar)[U.sizeof / 2];
+    auto asUTF = cast(ModifyTypePreservingSTC!(ToUTFType, T)[])arr;
+    debug validate(asUTF);
+    return asUTF;
+}
+
+///
+@safe pure unittest
+{
+    string a = "Hölo World";
+    immutable(ubyte)[] b = a.representation;
+    string c = b.assumeUTF;
+
+    assert(a == c);
+}
+
+pure unittest
+{
+    import std.algorithm : equal;
+    foreach(T; TypeTuple!(char[], wchar[], dchar[]))
+    {
+        immutable T jti = "Hello World";
+        T jt = jti.dup;
+
+        static if(is(T == char[]))
+        {
+            auto gt = cast(ubyte[])jt;
+            auto gtc = cast(const(ubyte)[])jt;
+            auto gti = cast(immutable(ubyte)[])jt;
+        }
+        else static if(is(T == wchar[]))
+        {
+            auto gt = cast(ushort[])jt;
+            auto gtc = cast(const(ushort)[])jt;
+            auto gti = cast(immutable(ushort)[])jt;
+        }
+        else static if(is(T == dchar[]))
+        {
+            auto gt = cast(uint[])jt;
+            auto gtc = cast(const(uint)[])jt;
+            auto gti = cast(immutable(uint)[])jt;
+        }
+
+        auto ht = assumeUTF(gt);
+        auto htc = assumeUTF(gtc);
+        auto hti = assumeUTF(gti);
+        assert(equal(jt, ht));
+        assert(equal(jt, htc));
+        assert(equal(jt, hti));
+    }
 }
