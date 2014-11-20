@@ -275,7 +275,7 @@ class IODevice : InputStream, OutputStream
      *
      * If 0 is returned, then the stream cannot be written to.
      */
-    size_t put(const(ubyte)[] data)
+    size_t write(const(ubyte)[] data)
     {
         auto result = core.sys.posix.unistd.write(fd, data.ptr, data.length);
         if(result < 0)
@@ -289,7 +289,7 @@ class IODevice : InputStream, OutputStream
     }
 
     /// ditto
-    alias put write;
+    alias put = write;
 
     /**
      * Close the stream.  This releases any resources from the object.

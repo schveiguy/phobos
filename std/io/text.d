@@ -1,6 +1,5 @@
 /**
-Standard I/O functions that extend $(B std.c.stdio).  $(B std.c.stdio)
-is $(D_PARAM public)ally imported when importing $(B std.stdio).
+Text io buffer definition
 
 Source: $(PHOBOSSRC std/_stdio.d)
 Macros:
@@ -8,9 +7,7 @@ WIKI=Phobos/StdStdio
 
 Copyright: Copyright Digital Mars 2007-.
 License:   $(WEB boost.org/LICENSE_1_0.txt, Boost License 1.0).
-Authors:   $(WEB digitalmars.com, Walter Bright),
-           $(WEB erdani.org, Andrei Alexandrescu),
-           Steven Schveighoffer
+Authors:   Steven Schveighoffer
  */
 module std.io.textbuf;
 import std.io.stream;
@@ -65,101 +62,6 @@ enum ByteOrder : ubyte
     Big
 }
 
-struct GenericBufferImpl
-{
-    static GenericBufferImpl createDefault() {
-        return GenericBufferImpl(512, 8 * 1024);
-    }
-
-    static GenericBufferImpl *allocateDefault() {
-        return new GenericBufferImpl(512, 8 * 1024);
-    }
-
-    this(size_t chunk, size_t initial) {
-        import core.bitop : bsr;
-        assert((chunk & (chunk - 1)) == 0 && chunk != 0);
-        static assert(bsr(1) == 0);
-        auto pageBits = bsr(chunk)+1;
-        pageMask = (1<<pageBits)-1;
-        //TODO: revisit with std.allocator
-        buffer = new ubyte[initial<<pageBits];
-        start = end = 0;
-    }
-
-    // get the valid data in the buffer
-    @property auto data(){
-        return buffer[start..end];
-    }
-
-    void discard(size_t toDiscard)
-    {
-        start += toDiscard;
-    }
-
-    // extends the buffer n bytes, returns the number of bytes that could be extended without reallocating.
-    // This includes if the data has to be moved.
-    //
-    // Use 0 as parameter if you only want to determine how much you can request without allocating.
-    size_t extend(ptrdiff_t n)
-    {
-        if(n > 0)
-        {
-            //TODO: tweak condition w.r.t. cost-benefit of compaction vs realloc
-            //
-            // currently, the code always compacts, even if it's inefficient. But only if n is non-zero
-            if (start > 0) {
-                // n + pageMask -> at least 1 page, no less then n
-                copy(buffer[start .. end], buffer[0 .. end - start]);
-                end -= start;
-                start = 0;
-            }
-        }
-        
-        if(end + n > buffer.length)
-        {
-            // need to extend more data
-            // rounded up to 2^^chunkBits
-            //TODO: tweak grow rate formula
-            auto oldLen = buffer.length;
-            auto newLen = max(end + n, oldLen * 14 / 10);
-            newLen = (newLen + pageMask) & ~pageMask; //round up to page
-            buffer.length = newLen;
-        }
-        
-        end += n;
-
-        return buffer.length - (end - start);
-    }
-
-    size_t capacity() const
-    {
-        return buffer.length;
-    }
-
-    void reset()
-    {
-        // reset all buffer data.
-        start = end = 0;
-    }
-
-private:
-    ubyte[] buffer; //big enough to contain all present marks
-    size_t start; // start of data in buffer
-    size_t end; // end of data in buffer
-    size_t pageMask; //bit mask - used for fast rounding to multiple of page
-}
-
-// basically returns that it always filled the requested data. Used for an output-only stream
-
-struct InfiniteStream
-{
-    size_t put(const(ubyte)[] src) {return src.length;}
-
-    size_t read(ubyte[] dest) {return dest.length;}
-
-    void close(){}
-}
-
 template ExpectedWidth(T)
 {
     static if(is(T == char))
@@ -180,33 +82,41 @@ template ExpectedWidth(T)
     }
 }
 
-struct TextStreamBuffer(BufImpl, IStream, OStream)
+struct TextStreamWindow(BufImpl, IStream, OStream) if(isBuffer!BufImpl && isInputStream!IStream && isOutputStream!OStream)
 {
-    this(BufImpl buf, StreamWidth sw = StreamWidth.AUTO)
+    // Only allow module to instantiate an instance
+    private
     {
-        _buf = buf;
-        _width = sw;
-        // by default no input or output stream
+        this(BufImpl buf, StreamWidth sw = StreamWidth.AUTO)
+        {
+            _buf = buf;
+            _width = sw;
+            // by default no input or output stream
+        }
+
+        void bindInput(IStream input, ByteOrder ibo = ByteOrder.Native)
+        {
+            _input = input;
+            _ibo = ibo;
+        }
+
+        void bindOutput(OStream output, ByteOrder obo = ByteOrder.Native)
+        {
+            _output = output;
+            _obo = obo;
+        }
     }
 
-    void bindInput(IStream input, ByteOrder ibo = ByteOrder.Native)
-    {
-        _input = input;
-        _ibo = ibo;
-    }
-
-    void bindOutput(OStream output, ByteOrder obo = ByteOrder.Native)
-    {
-        _output = output;
-        _obo = obo;
-    }
-
-    // returns number of bytes flushed.
+    // returns number of bytes read, these may not all be accessible
     size_t load(size_t toFlush, size_t toLoad = ~0)
     {
         debug writeln("load(", toFlush, ", ", toLoad, ")");
         if(toFlush)
         {
+            ubyte[] window = _buf.window;
+            if(toFlush > window.length)
+                toFlush = window.length;
+
             // flush some data. We can only flush full code units.
             switch(_width)
             {
@@ -227,37 +137,42 @@ struct TextStreamBuffer(BufImpl, IStream, OStream)
                 assert(0);
             }
 
-            ubyte[] dataToFlush = _buf.data[0..toFlush];
-            switch(_obo)
+            auto dataToFlush = window[0..toFlush];
+            assert(dataToFlush.length % _width == 0); // ensure we are aligned
+            if(_width != StreamWidth.UTF8)
             {
-            case ByteOrder.Big:
-                version(LittleEndian)
+                switch(_obo)
                 {
-                    swapBytes(dataToFlush);
+                case ByteOrder.Big:
+                    version(LittleEndian)
+                    {
+                        swapBytes(dataToFlush);
+                    }
+                    break;
+                case ByteOrder.Little:
+                    version(BigEndian)
+                    {
+                        swapBytes(dataToFlush);
+                    }
+                    break;
+                default:
+                    // by default, do not swap bytes
+                    break;
                 }
-                break;
-            case ByteOrder.Little:
-                version(BigEndian)
-                {
-                    swapBytes(dataToFlush);
-                }
-                break;
-            default:
-                // by default, do not swap bytes
-                break;
             }
             // write in a loop until the minimum data is written. Otherwise, we have data that may have been byte-swapped, but hasn't been written.
             // we can't allow access to byte-swapped data.
+            // TODO: see if we can just do one write, and keep track of the already-swapped data.
             while(dataToFlush.length > 0)
             {
-                auto nwritten = _output.put(dataToFlush);
+                auto nwritten = _output.write(dataToFlush);
                 if(!nwritten) // eof
                     break;
                 dataToFlush = dataToFlush[nwritten..$];
             }
             if(dataToFlush.length > 0)
             {
-                // encountered EOF, do something!
+                // TODO: encountered EOF, do something!
             }
 
            // update the buffer, letting it know that we don't need the discarded data anymore
@@ -269,13 +184,13 @@ struct TextStreamBuffer(BufImpl, IStream, OStream)
         if(toLoad == ~0)
         {
             // special indication that we want to just fill the existing buffer with whatever it can.
-            toRead = _buf.capacity - _buf.data.length;
+            toRead = _buf.capacity - _buf.window.length;
         }
         else
             toRead = toLoad-_overflow_len;
         _buf.extend(toRead);
-        debug writeln("toread = ", toRead, " _buf.data = ", _buf.data.length);
-        auto nRead = _input.read(_buf.data[$-toRead..$]);
+        debug writeln("toread = ", toRead, " _buf.window = ", _buf.window.length);
+        auto nRead = _input.read(_buf.window[$-toRead..$]);
         if(nRead == 0)
         {
             // TODO: handle EOF
@@ -286,10 +201,10 @@ struct TextStreamBuffer(BufImpl, IStream, OStream)
         _buf.extend(nRead - toRead);
 
         // get a pointer to the data just read, plus the overflow data
-        auto data = _buf.data[$-nRead-_overflow_len..$];
+        auto data = _buf.window[$-nRead-_overflow_len..$];
         debug writeln("read ", nRead, " bytes: ", data);
 
-        // now, read the data itself.
+        // now, process the data
         switch(_width)
         {
         case StreamWidth.AUTO:
@@ -343,7 +258,7 @@ struct TextStreamBuffer(BufImpl, IStream, OStream)
             break;
 
         case StreamWidth.UTF16:
-            // save any overflow (cannot decode yet because we don't have the other byte)
+            // save any overflow (cannot swap yet because we don't have the other byte)
             _overflow_len = data.length % wchar.sizeof;
             data.length -= _overflow_len;
             version(LittleEndian)
@@ -359,7 +274,7 @@ struct TextStreamBuffer(BufImpl, IStream, OStream)
             break;
 
         case StreamWidth.UTF32:
-            // save any overflow (cannot decode yet because we don't have the other bytes)
+            // save any overflow (cannot swap yet because we don't have the other bytes)
             _overflow_len = data.length % dchar.sizeof;
             data.length -= _overflow_len;
             version(LittleEndian)
@@ -378,15 +293,7 @@ struct TextStreamBuffer(BufImpl, IStream, OStream)
             assert(0, "invalid stream width");
         }
 
-        return toFlush;
-    }
-
-    // similar to load(0), but returns true if more data was received
-    bool underflow()
-    {
-        auto curlen = _buf.data.length;
-        load(0);
-        return curlen != _buf.data.length;
+        return nRead;
     }
 
     // returns number of bytes to skip if BOM is discarded
@@ -394,7 +301,7 @@ struct TextStreamBuffer(BufImpl, IStream, OStream)
     {
         // first, load data if no data exists
         if(window.length < 4)
-            underflow();
+            load(0);
         // check for BOM (may be a repeat of check, not sure)
         switch(_width)
         {
@@ -443,7 +350,7 @@ struct TextStreamBuffer(BufImpl, IStream, OStream)
 
     ubyte[] window()
     {
-        return _buf.data[0..$-_overflow_len];
+        return _buf.window[0..$-_overflow_len];
     }
 
     T[] textWindow(T = char)() if(is(T == char) || is(T == wchar) || is(T == dchar))
@@ -563,11 +470,16 @@ private:
     ubyte _overflow_len;
 }
 
+unittest
+{
+    static assert(isStreamWindow(TextStreamWindow!(NullBuffer, NullStream, NullStream)));
+}
+
 // constructor functions
 auto textInputBuffer(Input, Buffer)(Input i, Buffer b, StreamWidth width = StreamWidth.AUTO, ByteOrder bo = ByteOrder.Native) if(isInputStream!Input && isBuffer!Buffer)
 {
     // generate a text stream with an input only.
-    alias Stream = TextStreamBuffer!(Buffer, Input, InfiniteStream);
+    alias Stream = TextStreamWindow!(Buffer, Input, InfiniteStream);
     Stream *result = new Stream(b, width);
     result.bindInput(i, bo);
     return result;
@@ -575,7 +487,7 @@ auto textInputBuffer(Input, Buffer)(Input i, Buffer b, StreamWidth width = Strea
 
 auto textOutputBuffer(Output, Buffer)(Output o, Buffer b, StreamWidth width = StreamWidth.UTF8, ByteOrder bo = ByteOrder.Native) if(isOutputStream!Output && isBuffer!Buffer)
 {
-    alias Stream = TextStreamBuffer!(Buffer, InfiniteStream, Output);
+    alias Stream = TextStreamWindow!(Buffer, InfiniteStream, Output);
     Stream *result = new Stream(b, width);
     result.bindOutput(o, bo);
     return result;
@@ -583,18 +495,18 @@ auto textOutputBuffer(Output, Buffer)(Output o, Buffer b, StreamWidth width = St
 
 auto textStreamBuffer(Input, Output, Buffer)(Input i, Output o, Buffer b, StreamWidth width = StreamWidth.AUTO, ByteOrder inputbo = ByteOrder.Native, ByteOrder outputbo = ByteOrder.Native) if(isInputStream!Input && isOutputStream!Output && isBuffer!Buffer)
 {
-    alias Stream = TextStreamBuffer!(Buffer, Input, Output);
+    alias Stream = TextStreamWindow!(Buffer, Input, Output);
     Stream *result = new Stream(b, width);
-    result.bindInput(i, bo);
-    result.bindOutput(o, bo);
+    result.bindInput(i, inputbo);
+    result.bindOutput(o, outputbo);
     return result;
 }
 
 // BufferT must be a reference type
 struct TextFile(BufferT)
 {
-    alias InBuffer = TextStreamBuffer!(BufferT, IODevice, InfiniteStream);
-    alias OutBuffer = TextStreamBuffer!(BufferT, InfiniteStream, IODevice);
+    alias InBuffer = TextStreamWindow!(BufferT, IODevice, InfiniteStream);
+    alias OutBuffer = TextStreamWindow!(BufferT, InfiniteStream, IODevice);
 
     enum Mode
     {
@@ -636,9 +548,11 @@ struct TextFile(BufferT)
         final switch(_mode)
         {
         case Mode.Output:
+        case Mode.LockedOutput:
             _outbuf.width = w;
             break;
         case Mode.Input:
+        case Mode.LockedInput:
             _inbuf.width = w;
             break;
         }
@@ -650,9 +564,11 @@ struct TextFile(BufferT)
         final switch(_mode)
         {
         case Mode.Output:
+        case Mode.LockedOutput:
             _outbuf.outputByteOrder = bo;
             break;
         case Mode.Input:
+        case Mode.LockedInput:
             _inbuf.inputByteOrder = bo;
             break;
         }
@@ -671,6 +587,21 @@ struct TextFile(BufferT)
     {
         if(m != _mode)
         {
+            if(_mode & 0x2)
+            {
+                // cannot switch, it's locked.
+                return;
+            }
+
+            if((_mode & 0x1) == (m & 0x1))
+            {
+                // just switching to locked from unlocked.
+                _mode = m;
+                return;
+            }
+
+            // else, switching actual modes. Need to finish up the current mode and start the
+            // new mode
             final switch(_mode)
             {
             case Mode.Output:
@@ -690,6 +621,11 @@ struct TextFile(BufferT)
                     _inbuf.reset(); // reset the input buffer.
                 }
                 break;
+            case Mode.LockedInput:
+            case Mode.LockedOutput:
+                // should not get here, the test above should catch this
+                assert(0);
+                return;
             }
             // switch to new mode
             _mode = m;
@@ -697,6 +633,7 @@ struct TextFile(BufferT)
             final switch(_mode)
             {
             case Mode.Output:
+            case Mode.LockedOutput:
                 // ensure the width and byte order are identical
                 _outbuf.width = _inbuf.width;
                 _outbuf.outputByteOrder = _inbuf.inputByteOrder;
@@ -704,6 +641,7 @@ struct TextFile(BufferT)
                 _outbuf.load(0);
                 break;
             case Mode.Input:
+            case Mode.LockedInput:
                 // ensure the width and byte order are identical
                 _inbuf.width = _outbuf.width;
                 _inbuf.inputByteOrder = _outbuf.outputByteOrder;
