@@ -99,6 +99,14 @@ interface OutputStream : StreamBase
  */
 class IODevice : InputStream, OutputStream
 {
+    enum OpenMode
+    {
+        Unknown,
+        ReadOnly,
+        WriteOnly,
+        ReadWrite,
+    }
+
     private
     {
         // the file descriptor
@@ -112,6 +120,11 @@ class IODevice : InputStream, OutputStream
         // flag indicating the destructor should close the stream. Used
         // when a File does not own the fd in question (set to false).
         bool _closeOnDestroy;
+
+        // Identifies the mode that this device was opened with. If opened
+        // using an existing file descriptor, or with a FILE *, this is set
+        // to Unknown
+        OpenMode _openMode = OpenMode.Unknown;
     }
 
     /**
@@ -188,7 +201,25 @@ class IODevice : InputStream, OutputStream
         }
 
         // create the flags
-        int flags = rw ? O_RDWR : (m == 'r' ? O_RDONLY : O_WRONLY | O_CREAT);
+        int flags = void;
+        if(rw)
+        {
+            flags = O_RDWR;
+            _openMode = OpenMode.ReadWrite;
+        }
+        else
+        {
+            if(m == 'r')
+            {
+                flags = O_RDONLY;
+                _openMode = OpenMode.ReadOnly;
+            }
+            else
+            {
+                flags = O_WRONLY | O_CREAT;
+                _openMode = OpenMode.WriteOnly;
+            }
+        }
         if(!rw && m == 'w')
             flags |= O_TRUNC;
         this.fd = .open(toStringz(name), flags, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
@@ -340,5 +371,10 @@ class IODevice : InputStream, OutputStream
     @property int handle()
     {
         return fd;
+    }
+
+    @property OpenMode openMode()
+    {
+        return _openMode;
     }
 }

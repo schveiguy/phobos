@@ -9,7 +9,7 @@ Copyright: Copyright Digital Mars 2007-.
 License:   $(WEB boost.org/LICENSE_1_0.txt, Boost License 1.0).
 Authors:   Steven Schveighoffer
  */
-module std.io.textbuf;
+module std.io.text;
 import std.io.stream;
 import std.io.traits;
 import std.io.buffer;
@@ -537,8 +537,21 @@ struct TextFile(BufferT)
         _inbuf.bindInput(handle);
         _outbuf = OutBuffer(b);
         _outbuf.bindOutput(handle);
-        // default to input
-        _mode = Mode.Input;
+        // check the IO device to see what it says
+        final switch(handle.openMode)
+        {
+        case IODevice.OpenMode.Unknown:
+        case IODevice.OpenMode.ReadWrite:
+            // read/write, default to input
+            _mode = Mode.Input;
+            break;
+        case IODevice.OpenMode.ReadOnly:
+            _mode = Mode.LockedInput;
+            break;
+        case IODevice.OpenMode.WriteOnly:
+            _mode = Mode.LockedOutput;
+            break;
+        }
         _discardInputBOM = discardInputBOM;
     }
 
@@ -703,7 +716,7 @@ struct TextFile(BufferT)
     private void put(const(ubyte)[] d)
     in
     {
-        assert(_mode == Mode.Output);
+        assert(_mode == Mode.Output || _mode == Mode.LockedOutput);
     }
     body
     {
@@ -734,7 +747,7 @@ struct TextFile(BufferT)
 
     void flush()
     {
-        if(_mode == Mode.Output)
+        if((_mode & 0x1) == Mode.Output)
         {
             // flush all written data, and ensure the buffer is as full as possible
             _outbuf.load(bufferIdx);
@@ -949,10 +962,10 @@ struct TextFile(BufferT)
     // input TODO: skip should seek forward if nbytes is not in buffer.
     size_t skip(size_t nbytes)
     {
-        if(_mode == Mode.Output)
+        if((_mode & 0x1) == Mode.Output)
         {
             setMode(Mode.Input);
-            _inbuf.underflow();
+            _inbuf.load(0);
         }
         if(nbytes > _inbuf.window.length)
             nbytes = _inbuf.window.length;
@@ -998,7 +1011,7 @@ struct TextFile(BufferT)
             {
                 if(parseDChar(window))
                     break;
-                if(!input._inbuf.underflow())
+                if(!input._inbuf.load(0))
                     break;
             }
         }
@@ -1142,10 +1155,12 @@ struct TextFile(BufferT)
     }
 }
 
-TextFile!(GenericBufferImpl*)* openTextFile(string fname, string mode)
+TextFile!(ArrayBuffer*)* openTextFile(string fname, string mode)
 {
-    alias Result = TextFile!(GenericBufferImpl*);
-    auto buf = GenericBufferImpl.allocateDefault();
+    alias ReturnType = TextFile!(ArrayBuffer*);
+    auto buf = ArrayBuffer.allocateDefault();
     auto device = new IODevice(fname, mode);
-    return new Result(buf, device);
+    auto result = new ReturnType(buf, device);
+    // process the mode, to see if we are only going to read or write, and set a
+    // locked mode appropriately
 }
