@@ -63,13 +63,14 @@ to Unicode and ASCII are found in $(LINK2 std_uni.html, std.uni) and
 $(LINK2 std_ascii.html, std.ascii), respectively. Other functions that have a
 wider generality than just strings can be found in std.algorithm and std.range.
 
-Functions 
+Functions
 $(XREF uni, icmp)
 $(XREF uni, toLower)
 $(XREF uni, toLowerInPlace)
 $(XREF uni, toUpper)
 $(XREF uni, toUpperInPlace)
-are publicly imported. 
+$(XREF format, format)
+are publicly imported.
 
 Macros: WIKI = Phobos/StdString
 MYREF = <font face='Consolas, "Bitstream Vera Sans Mono", "Andale Mono", Monaco, "DejaVu Sans Mono", "Lucida Console", monospace'><a href="#.$1">$1</a>&nbsp;</font>
@@ -97,6 +98,8 @@ void trustedPrintf(in char* str) @trusted nothrow @nogc
 }
 
 public import std.uni : icmp, toLower, toLowerInPlace, toUpper, toUpperInPlace;
+public import std.format : format, sformat;
+import std.typecons : Flag;
 
 import std.range.constraints;
 import std.traits;
@@ -263,7 +266,7 @@ pure nothrow unittest
 /**
    Flag indicating whether a search is case-sensitive.
 */
-enum CaseSensitive { no, yes }
+alias CaseSensitive = Flag!"caseSensitive";
 
 /++
     Returns the index of the first occurrence of $(D c) in $(D s). If $(D c)
@@ -1892,7 +1895,7 @@ S capitalize(S)(S s) @trusted pure
     If $(D keepTerm) is set to $(D KeepTerminator.yes), then the delimiter
     is included in the strings returned.
   +/
-enum KeepTerminator : bool { no, yes }
+alias KeepTerminator = Flag!"keepTerminator";
 /// ditto
 S[] splitLines(S)(S s, in KeepTerminator keepTerm = KeepTerminator.no) @safe pure
     if (isSomeString!S)
@@ -2306,7 +2309,7 @@ C1[] chompPrefix(C1, C2)(C1[] str, C2[] delimiter) @safe pure
     else
     {
         import std.utf : decode;
-    
+
         auto orig = str;
         size_t index = 0;
 
@@ -3254,178 +3257,6 @@ private void translateImplAscii(C = immutable char, Buffer)(in char[] str,
     }
 }
 
-/*****************************************************
- * Format arguments into a string.
- *
- * Params: fmt  = Format string. For detailed specification, see $(XREF format,formattedWrite).
- *         args = Variadic list of arguments to format into returned string.
- *
- *  $(RED format's current implementation has been replaced with $(LREF xformat)'s
- *        implementation. in November 2012.
- *        This is seamless for most code, but it makes it so that the only
- *        argument that can be a format string is the first one, so any
- *        code which used multiple format strings has broken. Please change
- *        your calls to format accordingly.
- *
- *        e.g.:
- *        ----
- *        format("key = %s", key, ", value = %s", value)
- *        ----
- *        needs to be rewritten as:
- *        ----
- *        format("key = %s, value = %s", key, value)
- *        ----
- *   )
- */
-string format(Char, Args...)(in Char[] fmt, Args args)
-{
-    import std.format : formattedWrite, FormatException;
-    import std.array : appender;
-    auto w = appender!string();
-    auto n = formattedWrite(w, fmt, args);
-    version (all)
-    {
-        // In the future, this check will be removed to increase consistency
-        // with formattedWrite
-        import std.conv : text;
-        import std.exception : enforce;
-        enforce(n == args.length, new FormatException(
-            text("Orphan format arguments: args[", n, "..", args.length, "]")));
-    }
-    return w.data;
-}
-
-unittest
-{
-    import std.format;
-    import core.exception;
-
-    debug(string) trustedPrintf("std.string.format.unittest\n");
-
-    import std.exception;
-    assertCTFEable!(
-    {
-//  assert(format(null) == "");
-    assert(format("foo") == "foo");
-    assert(format("foo%%") == "foo%");
-    assert(format("foo%s", 'C') == "fooC");
-    assert(format("%s foo", "bar") == "bar foo");
-    assert(format("%s foo %s", "bar", "abc") == "bar foo abc");
-    assert(format("foo %d", -123) == "foo -123");
-    assert(format("foo %d", 123) == "foo 123");
-
-    assertThrown!FormatException(format("foo %s"));
-    assertThrown!FormatException(format("foo %s", 123, 456));
-
-    assert(format("hel%slo%s%s%s", "world", -138, 'c', true) ==
-                  "helworldlo-138ctrue");
-    });
-}
-
-
-/*****************************************************
- * Format arguments into buffer <i>buf</i> which must be large
- * enough to hold the result. Throws RangeError if it is not.
- * Returns: The slice of $(D buf) containing the formatted string.
- *
- *  $(RED sformat's current implementation has been replaced with $(LREF xsformat)'s
- *        implementation. in November 2012.
- *        This is seamless for most code, but it makes it so that the only
- *        argument that can be a format string is the first one, so any
- *        code which used multiple format strings has broken. Please change
- *        your calls to sformat accordingly.
- *
- *        e.g.:
- *        ----
- *        sformat(buf, "key = %s", key, ", value = %s", value)
- *        ----
- *        needs to be rewritten as:
- *        ----
- *        sformat(buf, "key = %s, value = %s", key, value)
- *        ----
- *   )
- */
-char[] sformat(Char, Args...)(char[] buf, in Char[] fmt, Args args)
-{
-    import core.exception : onRangeError;
-    import std.utf : encode;
-    import std.format : formattedWrite, FormatException;
-
-    size_t i;
-
-    struct Sink
-    {
-        void put(dchar c)
-        {
-            char[4] enc;
-            auto n = encode(enc, c);
-
-            if (buf.length < i + n)
-                onRangeError("std.string.sformat", 0);
-
-            buf[i .. i + n] = enc[0 .. n];
-            i += n;
-        }
-        void put(const(char)[] s)
-        {
-            if (buf.length < i + s.length)
-                onRangeError("std.string.sformat", 0);
-
-            buf[i .. i + s.length] = s[];
-            i += s.length;
-        }
-        void put(const(wchar)[] s)
-        {
-            for (; !s.empty; s.popFront())
-                put(s.front);
-        }
-        void put(const(dchar)[] s)
-        {
-            for (; !s.empty; s.popFront())
-                put(s.front);
-        }
-    }
-    auto n = formattedWrite(Sink(), fmt, args);
-    version (all)
-    {
-        // In the future, this check will be removed to increase consistency
-        // with formattedWrite
-        import std.conv : text;
-        import std.exception : enforce;
-        enforce(n == args.length, new FormatException(
-            text("Orphan format arguments: args[", n, "..", args.length, "]")));
-    }
-    return buf[0 .. i];
-}
-
-unittest
-{
-    import core.exception;
-    import std.format;
-
-    debug(string) trustedPrintf("std.string.sformat.unittest\n");
-
-    import std.exception;
-    assertCTFEable!(
-    {
-    char[10] buf;
-
-    assert(sformat(buf[], "foo") == "foo");
-    assert(sformat(buf[], "foo%%") == "foo%");
-    assert(sformat(buf[], "foo%s", 'C') == "fooC");
-    assert(sformat(buf[], "%s foo", "bar") == "bar foo");
-    assertThrown!RangeError(sformat(buf[], "%s foo %s", "bar", "abc"));
-    assert(sformat(buf[], "foo %d", -123) == "foo -123");
-    assert(sformat(buf[], "foo %d", 123) == "foo 123");
-
-    assertThrown!FormatException(sformat(buf[], "foo %s"));
-    assertThrown!FormatException(sformat(buf[], "foo %s", 123, 456));
-
-    assert(sformat(buf[], "%s %s %s", "c"c, "w"w, "d"d) == "c w d");
-    });
-}
-
-
 /***********************************************
  * See if character c is in the pattern.
  * Patterns:
@@ -3615,7 +3446,7 @@ S removechars(S)(S s, in S pattern) @safe pure if (isSomeString!S)
 S squeeze(S)(S s, in S pattern = null)
 {
     import std.utf : encode;
- 
+
     Unqual!(typeof(s[0]))[] r;
     dchar lastc;
     size_t lasti;

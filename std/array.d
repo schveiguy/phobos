@@ -1376,6 +1376,27 @@ unittest
     }
 }
 
+
+private size_t joinLength(RoR)(ref RoR ror)
+    if(isForwardRange!RoR)
+{
+    size_t ret;
+    foreach(r; ror.save)
+        ret += r.length;
+    return ret;
+}
+
+private size_t joinLength(RoR)(ref RoR ror, size_t sepLength)
+    if(isForwardRange!RoR)
+{
+    size_t ret;
+    foreach(r; ror.save)
+        ret += r.length + sepLength;
+    return ret - sepLength;
+}
+
+private U trustedCast(U, V)(V v) @trusted pure nothrow { return cast(U) v; }
+
 /++
    Concatenates all of the ranges in $(D ror) together into one array using
    $(D sep) as the separator if present.
@@ -1386,8 +1407,9 @@ ElementEncodingType!(ElementType!RoR)[] join(RoR, R)(RoR ror, R sep)
        isInputRange!R &&
        is(Unqual!(ElementType!(ElementType!RoR)) == Unqual!(ElementType!R)))
 {
-    alias RoRElem = ElementType!RoR;
     alias RetType = typeof(return);
+    alias RetTypeElement = Unqual!(ElementEncodingType!RetType);
+    alias RoRElem = ElementType!RoR;
 
     if (ror.empty)
         return RetType.init;
@@ -1396,37 +1418,49 @@ ElementEncodingType!(ElementType!RoR)[] join(RoR, R)(RoR ror, R sep)
     // This converts sep to an array (forward range) if it isn't one,
     // and makes sure it has the same string encoding for string types.
     static if (isSomeString!RetType &&
-               !is(Unqual!(ElementEncodingType!RetType) == Unqual!(ElementEncodingType!R)))
+               !is(RetTypeElement == Unqual!(ElementEncodingType!R)))
     {
         import std.conv : to;
         auto sepArr = to!RetType(sep);
+        scope(exit) sepArr.destroy();
     }
     else static if (!isArray!R)
+    {
         auto sepArr = array(sep);
+        scope(exit) sepArr.destroy();
+    }
     else
         alias sepArr = sep;
 
-    auto result = appender!RetType();
-    static if(isForwardRange!RoR &&
-              (isNarrowString!RetType || hasLength!RoRElem))
+    static if(isForwardRange!RoR && (hasLength!RoRElem || isNarrowString!RoRElem))
     {
-        // Reserve appender length if it can be computed.
-        size_t resultLen = 0;
-        immutable sepArrLength = sepArr.length;
-        for (auto temp = ror.save; !temp.empty; temp.popFront())
-            resultLen += temp.front.length + sepArrLength;
-        resultLen -= sepArrLength;
-        result.reserve(resultLen);
-        version(unittest) scope(exit) assert(result.data.length == resultLen);
+        auto result = uninitializedArray!(RetTypeElement[])(ror.joinLength(sepArr.length));
+        size_t len;
+        foreach(e; ror.front)
+            result[len++] = e;
+        ror.popFront();
+        foreach(r; ror)
+        {
+            foreach(e; sepArr)
+                result[len++] = e;
+            foreach(e; r)
+                result[len++] = e;
+        }
+        assert(len ==  result.length);
+        return trustedCast!RetType(result);
     }
-    put(result, ror.front);
-    ror.popFront();
-    for (; !ror.empty; ror.popFront())
+    else
     {
-        put(result, sepArr);
+        auto result = appender!RetType();
         put(result, ror.front);
+        ror.popFront();
+        for (; !ror.empty; ror.popFront())
+        {
+            put(result, sep);
+            put(result, ror.front);
+        }
+        return result.data;
     }
-    return result.data;
 }
 
 /// Ditto
@@ -1436,47 +1470,50 @@ ElementEncodingType!(ElementType!RoR)[] join(RoR, E)(RoR ror, E sep)
        is(E : ElementType!(ElementType!RoR)))
 {
     alias RetType = typeof(return);
-    alias RetTypeElement = Unqual!(ElementType!(RetType));
+    alias RetTypeElement = Unqual!(ElementEncodingType!RetType);
     alias RoRElem = ElementType!RoR;
 
     if (ror.empty)
         return RetType.init;
 
-    auto result = appender!RetType();
-
-    static if(isForwardRange!RoR &&
-              (isNarrowString!RetType || hasLength!RoRElem))
+    static if(isForwardRange!RoR && (hasLength!RoRElem || isNarrowString!RoRElem))
     {
-        // Reserve appender length if it can be computed.
-        //immutable sepArrLength = sepArr.length;
-        size_t resultLen = 0;
-        static if ((is(E == wchar) || is(E == dchar))
-                && !is(RetTypeElement == dchar))
+        static if (isSomeChar!E && isSomeChar!RetTypeElement && E.sizeof > RetTypeElement.sizeof)
         {
             import std.utf : encode;
-            RetTypeElement[4] encodeSpace;
-            immutable sepArrLength = encode(encodeSpace, sep);
+            RetTypeElement[4 / RetTypeElement.sizeof] encodeSpace;
+            immutable size_t sepArrLength = encode(encodeSpace, sep);
+            return join(ror, encodeSpace[0..sepArrLength]);
         }
         else
         {
-            immutable sepArrLength = 1;
+            auto result = uninitializedArray!(RetTypeElement[])(ror.joinLength(1));
+            size_t len;
+            foreach(e; ror.front)
+                result[len++] = e;
+            ror.popFront();
+            foreach(r; ror)
+            {
+                result[len++] = sep;
+                foreach(e; r)
+                    result[len++] = e;
+            }
+            assert(len ==  result.length);
+            return trustedCast!RetType(result);
         }
-        for (auto temp = ror.save; !temp.empty; temp.popFront())
-            resultLen += temp.front.length + sepArrLength;
-
-        resultLen -= sepArrLength;
-        result.reserve(resultLen);
-        version(unittest) scope(exit) assert(result.data.length == resultLen);
     }
-
-    put(result, ror.front);
-    ror.popFront();
-    for (; !ror.empty; ror.popFront())
+    else
     {
-        put(result, sep);
+        auto result = appender!RetType();
         put(result, ror.front);
+        ror.popFront();
+        for (; !ror.empty; ror.popFront())
+        {
+            put(result, sep);
+            put(result, ror.front);
+        }
+        return result.data;
     }
-    return result.data;
 }
 
 /// Ditto
@@ -1485,23 +1522,29 @@ ElementEncodingType!(ElementType!RoR)[] join(RoR)(RoR ror)
        isInputRange!(Unqual!(ElementType!RoR)))
 {
     alias RetType = typeof(return);
+    alias RetTypeElement = Unqual!(ElementEncodingType!RetType);
+    alias RoRElem = ElementType!RoR;
 
     if (ror.empty)
         return RetType.init;
 
-    alias R = ElementType!RoR;
-    auto result = appender!RetType();
-    static if(isForwardRange!RoR && (hasLength!R || isNarrowString!R))
+    static if(isForwardRange!RoR && (hasLength!RoRElem || isNarrowString!RoRElem))
     {
-        import std.algorithm : reduce;
-        // Reserve appender length if it can be computed.
-        immutable resultLen = reduce!("a + b.length")(cast(size_t) 0, ror.save);
-        result.reserve(resultLen);
-        version(unittest) scope(exit) assert(result.data.length == resultLen);
+        auto result = uninitializedArray!(RetTypeElement[])(ror.joinLength);
+        size_t len;
+        foreach(r; ror)
+            foreach(e; r)
+                result[len++] = e;
+        assert(len ==  result.length);
+        return trustedCast!RetType(result);
     }
-    for (; !ror.empty; ror.popFront())
-        put(result, ror.front);
-    return result.data;
+    else
+    {
+        auto result = appender!RetType();
+        for (; !ror.empty; ror.popFront())
+            put(result, ror.front);
+        return result.data;
+    }
 }
 
 ///
@@ -1522,15 +1565,33 @@ ElementEncodingType!(ElementType!RoR)[] join(RoR)(RoR ror)
 {
     import std.conv : to;
 
-    assert(join(["hello", "silly", "world"], ' ') == "hello silly world");
+    foreach (T; TypeTuple!(string,wstring,dstring))
+    {
+        auto arr2 = "Здравствуй Мир Unicode".to!(T);
+        auto arr = ["Здравствуй", "Мир", "Unicode"].to!(T[]);
+        assert(join(arr) == "ЗдравствуйМирUnicode");
+        foreach (S; TypeTuple!(char,wchar,dchar))
+        {
+            auto jarr = arr.join(to!S(' '));
+            static assert(is(typeof(jarr) == T));
+            assert(jarr == arr2);
+        }
+        foreach (S; TypeTuple!(string,wstring,dstring))
+        {
+            auto jarr = arr.join(to!S(" "));
+            static assert(is(typeof(jarr) == T));
+            assert(jarr == arr2);
+        }
+    }
 
     foreach (T; TypeTuple!(string,wstring,dstring))
     {
-        foreach (S; TypeTuple!(char,wchar,dchar))
+        auto arr2 = "Здравствуй\u047CМир\u047CUnicode".to!(T);
+        auto arr = ["Здравствуй", "Мир", "Unicode"].to!(T[]);
+        foreach (S; TypeTuple!(wchar,dchar))
         {
-            auto arr = to!(T[])(["hello", "silly", "world"]);
-            auto jarr = arr.join(to!S(' '));
-            auto arr2 = to!T("hello silly world");
+            auto jarr = arr.join(to!S('\u047C'));
+            static assert(is(typeof(jarr) == T));
             assert(jarr == arr2);
         }
     }
@@ -2036,8 +2097,9 @@ if (isDynamicArray!(E[]) &&
     isForwardRange!R1 && is(typeof(appender!(E[])().put(from[0 .. 1]))) &&
     isForwardRange!R2 && is(typeof(appender!(E[])().put(to[0 .. 1]))))
 {
+    import std.algorithm : countUntil;
     if (from.empty) return subject;
-    static if(isSomeString!(E[]))
+    static if (isSomeString!(E[]))
     {
         import std.string : indexOf;
         immutable idx = subject.indexOf(from);
@@ -2054,7 +2116,7 @@ if (isDynamicArray!(E[]) &&
     app.put(subject[0 .. idx]);
     app.put(to);
 
-    static if(isSomeString!(E[]) && isSomeString!R1)
+    static if (isSomeString!(E[]) && isSomeString!R1)
     {
         import std.utf : codeLength;
         immutable fromLength = codeLength!(Unqual!E, R1)(from);
@@ -2086,10 +2148,10 @@ unittest
 
     debug(std_array) printf("array.replaceFirst.unittest\n");
 
-    foreach(S; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[],
+    foreach (S; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[],
                           const(char[]), immutable(char[])))
     {
-        foreach(T; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[],
+        foreach (T; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[],
                               const(char[]), immutable(char[])))
         {
             auto s = to!S("This is a foo foo list");
@@ -2123,6 +2185,106 @@ unittest
     auto res = ["a", "a"];
     assert(replace(res, "a", "b") == ["b", "b"]);
     assert(replaceFirst(res, "a", "b") == ["b", "a"]);
+}
+
+/++
+    Replaces the last occurrence of $(D from) with $(D to) in $(D a). Returns a
+    new array without changing the contents of $(D subject), or the original
+    array if no match is found.
+ +/
+E[] replaceLast(E, R1, R2)(E[] subject, R1 from , R2 to)
+if (isDynamicArray!(E[]) &&
+    isForwardRange!R1 && is(typeof(appender!(E[])().put(from[0 .. 1]))) &&
+    isForwardRange!R2 && is(typeof(appender!(E[])().put(to[0 .. 1]))))
+{
+    import std.range : retro;
+    if (from.empty) return subject;
+    static if (isSomeString!(E[]))
+    {
+        import std.string : lastIndexOf;
+        auto idx = subject.lastIndexOf(from);
+    }
+    else
+    {
+        import std.algorithm : countUntil;
+        auto idx = retro(subject).countUntil(retro(from));
+    }
+
+    if (idx == -1)
+        return subject;
+
+    static if (isSomeString!(E[]) && isSomeString!R1)
+    {
+        import std.utf : codeLength;
+        auto fromLength = codeLength!(Unqual!E, R1)(from);
+    }
+    else
+        auto fromLength = from.length;
+
+    auto app = appender!(E[])();
+    static if (isSomeString!(E[]))
+        app.put(subject[0 .. idx]);
+    else
+        app.put(subject[0 .. $ - idx - fromLength]);
+
+    app.put(to);
+
+    static if (isSomeString!(E[]))
+        app.put(subject[idx+fromLength .. $]);
+    else
+        app.put(subject[$ - idx .. $]);
+
+    return app.data;
+}
+
+///
+unittest
+{
+    auto a = [1, 2, 2, 3, 4, 5];
+    auto b = a.replaceLast([2], [1337]);
+    assert(b == [1, 2, 1337, 3, 4, 5]);
+
+    auto s = "This is a foo foo list";
+    auto r = s.replaceLast("foo", "silly");
+    assert(r == "This is a foo silly list", r);
+}
+
+unittest
+{
+    import std.conv : to;
+    import std.algorithm : cmp;
+
+    debug(std_array) printf("array.replaceLast.unittest\n");
+
+    foreach (S; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[],
+                          const(char[]), immutable(char[])))
+    {
+        foreach (T; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[],
+                              const(char[]), immutable(char[])))
+        {
+            auto s = to!S("This is a foo foo list");
+            auto s2 = to!S("Thüs is a ßöö ßöö list");
+            auto from = to!T("foo");
+            auto from2 = to!T("ßöö");
+            auto into = to!T("silly");
+            auto into2 = to!T("sälly");
+
+            S r1 = replaceLast(s, from, into);
+            assert(cmp(r1, "This is a foo silly list") == 0, to!string(r1));
+
+            S r11 = replaceLast(s2, from2, into2);
+            assert(cmp(r11, "Thüs is a ßöö sälly list") == 0,
+                to!string(r11) ~ " : " ~ S.stringof ~ " " ~ T.stringof);
+
+            S r2 = replaceLast(r1, from, into);
+            assert(cmp(r2, "This is a silly silly list") == 0);
+
+            S r3 = replaceLast(s, to!T(""), into);
+            assert(cmp(r3, "This is a foo foo list") == 0);
+
+            assert(replaceLast(r3, to!T("won't find"), to!T("whatever")) is r3);
+        }
+    }
 }
 
 /++

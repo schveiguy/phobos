@@ -1503,8 +1503,6 @@ private auto packedArrayView(T)(inout(size_t)* ptr, size_t items) @trusted pure 
 // Partially unrolled binary search using Shar's method
 //============================================================================
 
-private import std.math : pow;
-
 string genUnrolledSwitchSearch(size_t size)
 {
     import std.conv : to;
@@ -3485,6 +3483,7 @@ version(unittest)
 @system unittest //@@@BUG@@@ iota is @system
 {
     import std.conv, std.range, std.algorithm;
+    import std.typecons;
     //ensure constructor handles bad ordering and overlap
     auto c1 = CodepointSet('а', 'я'+1, 'А','Я'+1);
     foreach(ch; chain(iota('а', 'я'+1), iota('А','Я'+1)))
