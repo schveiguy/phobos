@@ -470,7 +470,7 @@ private:
 
 unittest
 {
-    static assert(isStreamWindow(TextStreamWindow!(NullBuffer, NullStream, NullStream)));
+    static assert(isStreamWindow!(TextStreamWindow!(ArrayBuffer*, NullStream, NullStream)));
 }
 
 // constructor functions
