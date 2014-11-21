@@ -228,6 +228,6 @@ unittest
 {
     import std.typetuple;
     static assert(isBufferRange!NullBufferRange);
-    static assert(allSatisfy!(isMultiInputStream, /*NullStream,*/ InfiniteStream));
+    static assert(allSatisfy!(isMultiInputStream, NullStream, InfiniteStream));
     static assert(allSatisfy!(isMultiOutputStream, NullStream, InfiniteStream));
 }
