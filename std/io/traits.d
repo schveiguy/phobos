@@ -22,10 +22,10 @@ enum isBuffer(Buffer) = __traits(compiles, (ref Buffer b){
     auto r = b.window;
     alias R = typeof(r);
     static assert(is(R == ubyte[]));
-    buf.discard(size_t.max);
-    assert(buf.extend(ptrdiff_t.min));
-    assert(buf.capacity);
-    buf.reset();
+    b.discard(size_t.max);
+    assert(b.extend(ptrdiff_t.min));
+    assert(b.capacity);
+    b.reset();
 });
 
 /**
@@ -228,6 +228,6 @@ unittest
 {
     import std.typetuple;
     static assert(isBufferRange!NullBufferRange);
-    static assert(allSatisfy(isMultiInputStream, NullStream, InfiniteStream);
-    static assert(allSatisfy(isMultiOutputStream, NullStream, InfiniteStream);
+    static assert(allSatisfy!(isMultiInputStream, NullStream, InfiniteStream));
+    static assert(allSatisfy!(isMultiOutputStream, NullStream, InfiniteStream));
 }

@@ -44,6 +44,7 @@ struct ArrayBuffer
     // A negative value will shrink the "allocated" space down that much.
     size_t extend(ptrdiff_t n)
     {
+        import std.algorithm;
         if(n > 0)
         {
             //TODO: tweak condition w.r.t. cost-benefit of compaction vs realloc

@@ -1,11 +1,9 @@
 /**
 Text io buffer definition
 
-Source: $(PHOBOSSRC std/_stdio.d)
-Macros:
-WIKI=Phobos/StdStdio
+Source: $(PHOBOSSRC std/io/_text.d)
 
-Copyright: Copyright Digital Mars 2007-.
+Copyright: Copyright Digital Mars 2014-.
 License:   $(WEB boost.org/LICENSE_1_0.txt, Boost License 1.0).
 Authors:   Steven Schveighoffer
  */
@@ -502,6 +500,7 @@ auto textStreamBuffer(Input, Output, Buffer)(Input i, Output o, Buffer b, Stream
     return result;
 }
 
+
 // BufferT must be a reference type
 struct TextFile(BufferT)
 {
@@ -630,7 +629,7 @@ struct TextFile(BufferT)
                 if(bufferIdx != _inbuf.window.length)
                 {
                     // seek back to the current position according to the buffer index
-                    _handle.seekCurrent(cast(ptrdiff_t)(bufferIdx - _inbuf.buffer.data.length));
+                    _handle.seekCurrent(cast(ptrdiff_t)(bufferIdx - _inbuf.buffer.window.length));
                     _inbuf.reset(); // reset the input buffer.
                 }
                 break;
@@ -638,7 +637,6 @@ struct TextFile(BufferT)
             case Mode.LockedOutput:
                 // should not get here, the test above should catch this
                 assert(0);
-                return;
             }
             // switch to new mode
             _mode = m;
@@ -1160,7 +1158,5 @@ TextFile!(ArrayBuffer*)* openTextFile(string fname, string mode)
     alias ReturnType = TextFile!(ArrayBuffer*);
     auto buf = ArrayBuffer.allocateDefault();
     auto device = new IODevice(fname, mode);
-    auto result = new ReturnType(buf, device);
-    // process the mode, to see if we are only going to read or write, and set a
-    // locked mode appropriately
+    return new ReturnType(buf, device);
 }

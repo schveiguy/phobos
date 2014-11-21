@@ -88,9 +88,9 @@ interface OutputStream : StreamBase
      * returns: the number of bytes written on success.  If 0 is returned, then
      * the stream cannot be written to.
      */
-    size_t put(const(ubyte)[] data);
+    size_t write(const(ubyte)[] data);
     /// ditto
-    alias put write;
+    alias put = write;
 }
 
 /**

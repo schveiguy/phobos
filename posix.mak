@@ -193,7 +193,7 @@ STD_RANGE_MODULES = $(addprefix std/range/, package constraints interfaces)
 
 STD_DIGEST_MODULES = $(addprefix std/digest/, digest crc md ripemd sha)
 
-STD_DIGEST_MODULES = $(addprefix std/io/, buffer textbuf stream traits package)
+STD_DIGEST_MODULES = $(addprefix std/io/, buffer text stream traits package)
 
 STD_CONTAINER_MODULES = $(addprefix std/container/, package array \
 		binaryheap dlist rbtree slist util)
