@@ -190,7 +190,7 @@ MAIN = $(ROOT)/emptymain.d
 # Packages in std. Just mention the package name here and the actual files in
 # the package in STD_MODULES.
 STD_PACKAGES = $(addprefix std/, algorithm container experimental/logger \
-	range regex)
+	io range regex)
 
 # Modules in std (including those in packages), in alphabetical order.
 STD_MODULES = $(addprefix std/, \
@@ -200,9 +200,10 @@ STD_MODULES = $(addprefix std/, \
   $(addprefix digest/, digest crc md ripemd sha) \
   encoding exception \
   $(addprefix experimental/logger/, core filelogger nulllogger multilogger) \
-  file format functional getopt json math mathspecial \
-  metastrings mmfile net/isemail net/curl numeric outbuffer parallelism path \
-  process random \
+  file format functional getopt \
+  $(addprefix io/, buffer text stream traits) \
+  json math mathspecial metastrings mmfile net/isemail net/curl numeric \
+  outbuffer parallelism path process random \
   $(addprefix range/, primitives interfaces) \
   $(addprefix regex/, $(addprefix internal/,generator ir parser backtracking \
   	kickstart tests thompson)) \
