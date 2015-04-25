@@ -1,8 +1,6 @@
 // Written in the D programming language.
 
 /++
-    $(SECTION Overview)
-
     $(P The $(D std.uni) module provides an implementation
     of fundamental Unicode algorithms and data structures.
     This doesn't include UTF encoding and decoding primitives,
@@ -652,7 +650,7 @@ module std.uni;
 
 import core.stdc.stdlib;
 import std.traits, std.typetuple;
-import std.range.constraints;
+import std.range.primitives;
 
 
 // debug = std_uni;
@@ -691,9 +689,10 @@ else
 
 public enum dchar lineSep = '\u2028'; /// Constant $(CODEPOINT) (0x2028) - line separator.
 public enum dchar paraSep = '\u2029'; /// Constant $(CODEPOINT) (0x2029) - paragraph separator.
+public enum dchar nelSep  = '\u0085'; /// Constant $(CODEPOINT) (0x0085) - next line.
 
 // test the intro example
-unittest
+@safe unittest
 {
     import std.algorithm : find;
     // initialize code point sets using script/block or property name
@@ -1638,7 +1637,8 @@ unittest
 }
 //============================================================================
 
-@safe:
+@safe
+{
 // hope to see simillar stuff in public interface... once Allocators are out
 //@@@BUG moveFront and friends? dunno, for now it's POD-only
 
@@ -2241,7 +2241,11 @@ public:
 
 
 
-    /// Obtains a set that is the inversion of this set. See also $(LREF inverted).
+    /**
+     * Obtains a set that is the inversion of this set.
+     *
+     * See_Also: $(LREF inverted)
+     */
     auto opUnary(string op: "!")()
     {
         return this.inverted;
@@ -2350,7 +2354,7 @@ public:
     unittest
     {
         import std.conv : to;
-        import std.string : format;
+        import std.format : format;
         import std.uni : unicode;
 
         assert(unicode.Cyrillic.to!string ==
@@ -2369,7 +2373,7 @@ public:
     unittest
     {
         import std.exception : assertThrown;
-        import std.string : format;
+        import std.format : format;
         assertThrown!FormatException(format("%a", unicode.ASCII));
     }
 
@@ -2396,6 +2400,7 @@ public:
 
 private:
 
+  package(std)  // used from: std.regex.internal.parser
     ref intersect(U)(U rhs)
         if(isCodepointSet!U)
     {
@@ -2430,6 +2435,7 @@ private:
     }
 
     // same as the above except that skip & drop parts are swapped
+  package(std)  // used from: std.regex.internal.parser
     ref sub(U)(U rhs)
         if(isCodepointSet!U)
     {
@@ -2443,6 +2449,7 @@ private:
         return this;
     }
 
+  package(std)  // used from: std.regex.internal.parse
     ref add(U)(U rhs)
         if(isCodepointSet!U)
     {
@@ -2538,7 +2545,7 @@ public:
     string toSourceCode(string funcName="")
     {
         import std.array : array;
-        import std.string : format;
+        import std.format : format;
         import std.algorithm : countUntil;
         enum maxBinary = 3;
         static string linearScope(R)(R ivals, string indent)
@@ -3090,7 +3097,7 @@ private:
         *dest = (val<<8) | (*dest & 0xFF);
 }
 
-uint read24(const ubyte* ptr, size_t idx) pure nothrow @nogc
+uint read24(const ubyte* ptr, size_t idx) @safe pure nothrow @nogc
 {
     static if(hasUnalignedReads)
         return __ctfe ? safeRead24(ptr, idx) : unalignedRead24(ptr, idx);
@@ -3098,7 +3105,7 @@ uint read24(const ubyte* ptr, size_t idx) pure nothrow @nogc
         return safeRead24(ptr, idx);
 }
 
-void write24(ubyte* ptr, uint val, size_t idx) pure nothrow @nogc
+void write24(ubyte* ptr, uint val, size_t idx) @safe pure nothrow @nogc
 {
     static if(hasUnalignedReads)
         return __ctfe ? safeWrite24(ptr, val, idx) : unalignedWrite24(ptr, val, idx);
@@ -3313,7 +3320,7 @@ private:
     uint[] data;
 }
 
-@trusted unittest// Uint24 tests //@@@BUG@@ iota is system ?!
+@safe unittest// Uint24 tests
 {
     import std.algorithm;
     import std.conv;
@@ -3403,7 +3410,7 @@ version(unittest)
     private alias AllSets = TypeTuple!(InversionList!GcPolicy, InversionList!ReallocPolicy);
 }
 
-@trusted unittest// core set primitives test
+@safe unittest// core set primitives test
 {
     import std.conv;
     foreach(CodeList; AllSets)
@@ -3480,7 +3487,7 @@ version(unittest)
 
 
 //test constructor to work with any order of intervals
-@system unittest //@@@BUG@@@ iota is @system
+@safe unittest
 {
     import std.conv, std.range, std.algorithm;
     import std.typecons;
@@ -3522,7 +3529,7 @@ version(unittest)
 }
 
 
-@trusted unittest
+@safe unittest
 {   // full set operations
     import std.conv;
     foreach(CodeList; AllSets)
@@ -3625,9 +3632,9 @@ version(unittest)
     }
 }
 
+}
 
-@system:
-unittest// vs single dchar
+@safe unittest// vs single dchar
 {
     import std.conv;
     CodepointSet a = CodepointSet(10, 100, 120, 200);
@@ -3635,7 +3642,7 @@ unittest// vs single dchar
     assert((a & 'B') == CodepointSet(66, 67));
 }
 
-unittest// iteration & opIndex
+@safe unittest// iteration & opIndex
 {
     import std.conv;
     import std.typecons;
@@ -4292,7 +4299,7 @@ public template codepointTrie(T, sizes...)
     }
 }
 
-unittest // codepointTrie example
+pure unittest // codepointTrie example
 {
     import std.algorithm;
     // pick characters from the Greek script
@@ -4406,7 +4413,7 @@ public template buildTrie(Value, Key, Args...)
         In other words $(LREF mapTrieIndex) should be a
         monotonically increasing function that maps $(D Key) to an integer.
 
-        See also: $(XREF _algorithm, sort),
+        See_Also: $(XREF _algorithm, sort),
         $(XREF _range, SortedRange),
         $(XREF _algorithm, setUnion).
     */
@@ -4740,7 +4747,7 @@ template Utf8Matcher()
     // from 3 primitives: tab!(size), lookup and Sizes
     mixin template DefMatcher()
     {
-        import std.string : format;
+        import std.format : format;
         enum hasASCII = staticIndexOf!(1, Sizes) >= 0;
         alias UniSizes = Erase!(1, Sizes);
 
@@ -5214,7 +5221,7 @@ public auto utfMatcher(Char, Set)(Set set) @trusted
 
 
 //a range of code units, packed with index to speed up forward iteration
-package auto decoder(C)(C[] s, size_t offset=0) @trusted
+package auto decoder(C)(C[] s, size_t offset=0) @safe pure nothrow @nogc
     if(is(C : wchar) || is(C : char))
 {
     static struct Decoder
@@ -5243,7 +5250,7 @@ package auto decoder(C)(C[] s, size_t offset=0) @trusted
     Expose UTF string $(D s) as a random-access
     range of $(S_LINK Code unit, code units).
 */
-package auto units(C)(C[] s)
+package auto units(C)(C[] s) @safe pure nothrow @nogc
     if(is(C : wchar) || is(C : char))
 {
     static struct Units
@@ -5376,7 +5383,7 @@ package auto units(C)(C[] s)
 unittest
 {
     import std.exception : collectException;
-    import std.string : format;
+    import std.format : format;
     import std.algorithm;
     auto utf16 = utfMatcher!wchar(unicode.L);
     auto utf8 = utfMatcher!char(unicode.L);
@@ -5564,8 +5571,8 @@ struct sliceBits(size_t from, size_t to)
     }
 }
 
-uint low_8(uint x) { return x&0xFF; }
-@safe pure nothrow uint midlow_8(uint x){ return (x&0xFF00)>>8; }
+@safe pure nothrow @nogc uint low_8(uint x) { return x&0xFF; }
+@safe pure nothrow @nogc uint midlow_8(uint x){ return (x&0xFF00)>>8; }
 alias lo8 = assumeSize!(low_8, 8);
 alias mlo8 = assumeSize!(midlow_8, 8);
 
@@ -5727,7 +5734,7 @@ template idxTypes(Key, size_t fullBits, Prefix...)
 
 //============================================================================
 
-@trusted int comparePropertyName(Char1, Char2)(const(Char1)[] a, const(Char2)[] b)
+@safe pure int comparePropertyName(Char1, Char2)(const(Char1)[] a, const(Char2)[] b) if (is(Char1 : dchar) && is(Char2 : dchar))
 {
     import std.ascii : toLower;
     import std.algorithm : cmp, map, filter;
@@ -5737,12 +5744,12 @@ template idxTypes(Key, size_t fullBits, Prefix...)
         b.map!toLower.filter!pred);
 }
 
-unittest
+@safe pure unittest
 {
     assert(!comparePropertyName("foo-bar", "fooBar"));
 }
 
-bool propertyNameLess(Char1, Char2)(const(Char1)[] a, const(Char2)[] b)
+bool propertyNameLess(Char1, Char2)(const(Char1)[] a, const(Char2)[] b) @safe pure if (is(Char1 : dchar) && is(Char2 : dchar))
 {
     return comparePropertyName(a, b) < 0;
 }
@@ -5805,7 +5812,7 @@ package ubyte[] compressIntervals(Range)(Range intervals)
     return storage;
 }
 
-unittest
+@safe pure unittest
 {
     import std.typecons;
     auto run = [tuple(80, 127), tuple(128, (1<<10)+128)];
@@ -5832,7 +5839,7 @@ unittest
     return DecompressedIntervals(data);
 }
 
-@trusted struct DecompressedIntervals
+@safe struct DecompressedIntervals
 {
 pure:
     const(ubyte)[] _stream;
@@ -6083,7 +6090,7 @@ template SetSearcher(alias table, string kind)
         $(D unicode.InBlockName), to search a script
         use $(D unicode.ScriptName).
 
-        See also $(LREF block), $(LREF script)
+        See_Also: $(LREF block), $(LREF script)
         and (not included in this search) $(LREF hangulSyllableType).
 
         Example:
@@ -6134,8 +6141,6 @@ template SetSearcher(alias table, string kind)
     /**
         Narrows down the search for sets of $(CODEPOINTS) to all Unicode blocks.
 
-        See also $(S_LINK Unicode properties, table of properties).
-
         Note:
         Here block names are unambiguous as no scripts are searched
         and thus to search use simply $(D unicode.block.BlockName) notation.
@@ -6147,6 +6152,8 @@ template SetSearcher(alias table, string kind)
         // use .block for explicitness
         assert(unicode.block.Greek_and_Coptic == unicode.InGreek_and_Coptic);
         ---
+
+        See_Also: $(S_LINK Unicode properties, table of properties).
     */
     struct block
     {
@@ -6419,9 +6426,17 @@ template genericDecodeGrapheme(bool getValue)
 public: // Public API continues
 
 /++
-    Returns the length of grapheme cluster starting at $(D index).
+    Computes the length of grapheme cluster starting at $(D index).
     Both the resulting length and the $(D index) are measured
     in $(S_LINK Code unit, code units).
+
+    Params:
+        C = type that is implicitly convertible to $(D dchars)
+        input = array of grapheme clusters
+        index = starting index into $(D input[])
+
+    Returns:
+        length of grapheme cluster
 
     Example:
     ---
@@ -6601,7 +6616,7 @@ unittest
 auto byCodePoint(Range)(Range range)
     if(isInputRange!Range && is(Unqual!(ElementType!Range) == Grapheme))
 {
-	// TODO: Propagate bidirectional access
+    // TODO: Propagate bidirectional access
     static struct Result
     {
         private Range _range;
@@ -6711,7 +6726,8 @@ unittest
     // the usual range manipulation is possible
     assert(wideOne[].filter!isMark.equal("\u0308"));
     ---
-    $(P See also $(LREF decodeGrapheme), $(LREF graphemeStride). )
+
+    See_Also: $(LREF decodeGrapheme), $(LREF graphemeStride)
 +/
 @trusted struct Grapheme
 {
@@ -6803,7 +6819,7 @@ public:
         // still could be useful though
         assert(g[].equal("A\u0301B"));
         ---
-        See also $(LREF Grapheme.valid) below.
+        See_Also: $(LREF Grapheme.valid)
     +/
     ref opOpAssign(string op)(dchar ch)
     {
@@ -7031,7 +7047,16 @@ unittest
 /++
     $(P Does basic case-insensitive comparison of strings $(D str1) and $(D str2).
     This function uses simpler comparison rule thus achieving better performance
-    then $(LREF icmp). However keep in mind the warning below.)
+    than $(LREF icmp). However keep in mind the warning below.)
+
+    Params:
+        str1 = a string or a $(D ForwardRange) of $(D dchar)s
+        str2 = a string or a $(D ForwardRange) of $(D dchar)s
+
+    Returns:
+        An $(D int) that is 0 if the strings match,
+        &lt;0 if $(D str1) is lexicographically "less" than $(D str2),
+        &gt;0 if $(D str1) is lexicographically "greater" than $(D str2)
 
     Warning:
     This function only handles 1:1 $(CODEPOINT) mapping
@@ -7051,6 +7076,10 @@ unittest
     assert(icmp("ΐ", "\u03B9\u0308\u0301") == 0);
     assert(icmp("ΌΎ", "όύ") == 0);
     ---
+
+    See_Also:
+        $(LREF icmp)
+        $(XREF algorithm, cmp)
 +/
 int sicmp(S1, S2)(S1 str1, S2 str2)
     if(isForwardRange!S1 && is(Unqual!(ElementType!S1) == dchar)
@@ -7211,7 +7240,7 @@ unittest
     {
         foreach(S1; TypeTuple!(string, wstring, dstring))
         foreach(S2; TypeTuple!(string, wstring, dstring))
-        {
+        (){ // avoid slow optimizations for large functions @@@BUG@@@ 2396
             assert(cfunc("".to!S1(), "".to!S2()) == 0);
             assert(cfunc("A".to!S1(), "".to!S2()) > 0);
             assert(cfunc("".to!S1(), "0".to!S2()) < 0);
@@ -7223,7 +7252,7 @@ unittest
             // Check example:
             assert(cfunc("Август".to!S1(), "авгусТ".to!S2()) == 0);
             assert(cfunc("ΌΎ".to!S1(), "όύ".to!S2()) == 0);
-        }
+        }();
         // check that the order is properly agnostic to the case
         auto strs = [ "Apple", "ORANGE",  "orAcle", "amp", "banana"];
         sort!((a,b) => cfunc(a,b) < 0)(strs);
@@ -7354,12 +7383,12 @@ unittest
     // placed after a "ring below" in a sequence
     ---
 +/
-ubyte combiningClass(dchar ch)
+ubyte combiningClass(dchar ch) @safe pure nothrow @nogc
 {
     return combiningClassTrie[ch];
 }
 
-unittest
+@safe pure nothrow @nogc unittest
 {
     foreach(ch; 0..0x80)
         assert(combiningClass(ch) == 0);
@@ -7441,7 +7470,8 @@ public dchar compose(dchar first, dchar second) pure nothrow
     Note:
     This function also decomposes hangul syllables
     as prescribed by the standard.
-    See also $(LREF decomposeHangul) for a restricted version
+
+    See_Also: $(LREF decomposeHangul) for a restricted version
     that takes into account only hangul syllables  but
     no other decompositions.
 
@@ -7565,12 +7595,6 @@ public:
 /**
     Decomposes a Hangul syllable. If $(D ch) is not a composed syllable
     then this function returns $(LREF Grapheme) containing only $(D ch) as is.
-
-    Example:
-    ---
-    import std.algorithm;
-    assert(decomposeHangul('\uD4DB')[].equal("\u1111\u1171\u11B6"));
-    ---
 */
 Grapheme decomposeHangul(dchar ch)
 {
@@ -7588,6 +7612,13 @@ Grapheme decomposeHangul(dchar ch)
         return Grapheme(partL, partV);
 }
 
+///
+unittest
+{
+    import std.algorithm;
+    assert(decomposeHangul('\uD4DB')[].equal("\u1111\u1171\u11B6"));
+}
+
 /++
     Try to compose hangul syllable out of a leading consonant ($(D lead)),
     a $(D vowel) and optional $(D trailing) consonant jamos.
@@ -7596,17 +7627,6 @@ Grapheme decomposeHangul(dchar ch)
 
     If any of $(D lead) and $(D vowel) are not a valid hangul jamo
     of the respective $(CHARACTER) class returns dchar.init.
-
-    Example:
-    ---
-    assert(composeJamo('\u1111', '\u1171', '\u11B6') == '\uD4DB');
-    // leaving out T-vowel, or passing any codepoint
-    // that is not trailing consonant composes an LV-syllable
-    assert(composeJamo('\u1111', '\u1171') == '\uD4CC');
-    assert(composeJamo('\u1111', '\u1171', ' ') == '\uD4CC');
-    assert(composeJamo('\u1111', 'A') == dchar.init);
-    assert(composeJamo('A', '\u1171') == dchar.init);
-    ---
 +/
 dchar composeJamo(dchar lead, dchar vowel, dchar trailing=dchar.init) pure nothrow @nogc
 {
@@ -7619,6 +7639,18 @@ dchar composeJamo(dchar lead, dchar vowel, dchar trailing=dchar.init) pure nothr
     int indexLV = indexL * jamoNCount + indexV * jamoTCount;
     dchar syllable = jamoSBase + indexLV;
     return isJamoT(trailing) ? syllable + (trailing - jamoTBase) : syllable;
+}
+
+///
+unittest
+{
+    assert(composeJamo('\u1111', '\u1171', '\u11B6') == '\uD4DB');
+    // leaving out T-vowel, or passing any codepoint
+    // that is not trailing consonant composes an LV-syllable
+    assert(composeJamo('\u1111', '\u1171') == '\uD4CC');
+    assert(composeJamo('\u1111', '\u1171', ' ') == '\uD4CC');
+    assert(composeJamo('\u1111', 'A') == dchar.init);
+    assert(composeJamo('A', '\u1171') == dchar.init);
 }
 
 unittest
@@ -7679,20 +7711,6 @@ enum {
     Note:
     In cases where the string in question is already normalized,
     it is returned unmodified and no memory allocation happens.
-
-    Example:
-    ---
-    // any encoding works
-    wstring greet = "Hello world";
-    assert(normalize(greet) is greet); // the same exact slice
-
-    // An example of a character with all 4 forms being different:
-    // Greek upsilon with acute and hook symbol (code point 0x03D3)
-    assert(normalize!NFC("ϓ") == "\u03D3");
-    assert(normalize!NFD("ϓ") == "\u03D2\u0301");
-    assert(normalize!NFKC("ϓ") == "\u038E");
-    assert(normalize!NFKD("ϓ") == "\u03A5\u0301");
-    ---
 +/
 inout(C)[] normalize(NormalizationForm norm=NFC, C)(inout(C)[] input)
 {
@@ -7783,6 +7801,21 @@ inout(C)[] normalize(NormalizationForm norm=NFC, C)(inout(C)[] input)
     }while(anchors[0] != input.length);
     app.put(input[0..anchors[0]]);
     return cast(inout(C)[])app.data;
+}
+
+///
+unittest
+{
+    // any encoding works
+    wstring greet = "Hello world";
+    assert(normalize(greet) is greet); // the same exact slice
+
+    // An example of a character with all 4 forms being different:
+    // Greek upsilon with acute and hook symbol (code point 0x03D3)
+    assert(normalize!NFC("ϓ") == "\u03D3");
+    assert(normalize!NFD("ϓ") == "\u03D2\u0301");
+    assert(normalize!NFKC("ϓ") == "\u038E");
+    assert(normalize!NFKD("ϓ") == "\u03A5\u0301");
 }
 
 unittest
@@ -7928,18 +7961,21 @@ private auto seekStable(NormalizationForm norm, C)(size_t idx, in C[] input)
 /**
     Tests if dchar $(D ch) is always allowed (Quick_Check=YES) in normalization
     form $(D norm).
-    ---
+*/
+public bool allowedIn(NormalizationForm norm)(dchar ch)
+{
+    return !notAllowedIn!norm(ch);
+}
+
+///
+unittest
+{
     // e.g. Cyrillic is always allowed, so is ASCII
     assert(allowedIn!NFC('я'));
     assert(allowedIn!NFD('я'));
     assert(allowedIn!NFKC('я'));
     assert(allowedIn!NFKD('я'));
     assert(allowedIn!NFC('Z'));
-    ---
-*/
-public bool allowedIn(NormalizationForm norm)(dchar ch)
-{
-    return !notAllowedIn!norm(ch);
 }
 
 // not user friendly name but more direct
@@ -8180,6 +8216,369 @@ unittest //12428
     toUpper(s);
 
     assert(s == "abcdefghij");
+}
+
+
+// generic toUpper/toLower on whole range, returns range
+private auto toCaser(alias indexFn, uint maxIdx, alias tableFn, Range)(Range str)
+    // Accept range of dchar's
+    if (isInputRange!Range &&
+        isSomeChar!(ElementEncodingType!Range) &&
+        ElementEncodingType!Range.sizeof == dchar.sizeof)
+{
+    static struct ToCaserImpl
+    {
+        @property bool empty()
+        {
+            return !nLeft && r.empty;
+        }
+
+        @property auto front()
+        {
+            if (!nLeft)
+            {
+                dchar c = r.front;
+                const idx = indexFn(c);
+                if (idx == ushort.max)
+                {
+                    buf[0] = c;
+                    nLeft = 1;
+                }
+                else if (idx < maxIdx)
+                {
+                    buf[0] = tableFn(idx);
+                    nLeft = 1;
+                }
+                else
+                {
+                    auto val = tableFn(idx);
+                    // unpack length + codepoint
+                    nLeft = val >> 24;
+                    if (nLeft == 0)
+                        nLeft = 1;
+                    assert(nLeft <= buf.length);
+                    buf[nLeft - 1] = cast(dchar)(val & 0xFF_FFFF);
+                    foreach (j; 1 .. nLeft)
+                        buf[nLeft - j - 1] = tableFn(idx + j);
+                }
+            }
+            return buf[nLeft - 1];
+        }
+
+        void popFront()
+        {
+            if (!nLeft)
+                front();
+            assert(nLeft);
+            --nLeft;
+            if (!nLeft)
+                r.popFront();
+        }
+
+        static if (isForwardRange!Range)
+        {
+            @property auto save()
+            {
+                auto ret = this;
+                ret.r = r.save;
+                return ret;
+            }
+        }
+
+      private:
+        Range r;
+        uint nLeft;
+        dchar[3] buf = void;
+    }
+
+    return ToCaserImpl(str);
+}
+
+/*********************
+ * Convert input range or string to upper or lower case.
+ *
+ * Does not allocate memory.
+ * Characters in UTF-8 or UTF-16 format that cannot be decoded
+ * are treated as $(XREF utf, replacementDchar).
+ *
+ * Params:
+ *      str = string or range of characters
+ *
+ * Returns:
+ *      an InputRange of dchars
+ *
+ * See_Also:
+ *      $(LREF toUpper), $(LREF toLower)
+ */
+
+auto toLowerCase(Range)(Range str)
+    if (isInputRange!Range && isSomeChar!(ElementEncodingType!Range))
+{
+    static if (ElementEncodingType!Range.sizeof < dchar.sizeof)
+    {
+        import std.utf : byDchar;
+
+        // Decode first
+        return toCaser!LowerTriple(str.byDchar);
+    }
+    else
+    {
+        return toCaser!LowerTriple(str);
+    }
+}
+
+/// ditto
+auto toUpperCase(Range)(Range str)
+    if (isInputRange!Range && isSomeChar!(ElementEncodingType!Range))
+{
+    static if (ElementEncodingType!Range.sizeof < dchar.sizeof)
+    {
+        import std.utf : byDchar;
+
+        // Decode first
+        return toCaser!UpperTriple(str.byDchar);
+    }
+    else
+    {
+        return toCaser!UpperTriple(str);
+    }
+}
+
+///
+@safe pure unittest
+{
+    import std.algorithm: equal;
+
+    assert("hEllo".toUpperCase.equal("HELLO"));
+}
+
+unittest
+{
+    import std.array;
+
+    auto a = "HELLo".toLowerCase;
+    auto savea = a.save;
+    auto s = a.array;
+    assert(s == "hello");
+    s = savea.array;
+    assert(s == "hello");
+
+    string[] lower = ["123", "abcфеж", "\u0131\u023f\u03c9", "i\u0307\u1Fe2"];
+    string[] upper = ["123", "ABCФЕЖ", "I\u2c7e\u2126", "\u0130\u03A5\u0308\u0300"];
+
+    foreach (i, slwr; lower)
+    {
+        import std.utf : byChar;
+
+        auto sx = slwr.toUpperCase.byChar.array;
+        assert(sx == toUpper(slwr));
+        auto sy = upper[i].toLowerCase.byChar.array;
+        assert(sy == toLower(upper[i]));
+    }
+
+    // Not necessary to call r.front
+    for (auto r = lower[3].toUpperCase; !r.empty; r.popFront())
+    {
+    }
+
+    import std.algorithm : equal;
+
+    "HELLo"w.toLowerCase.equal("hello"d);
+    "HELLo"w.toUpperCase.equal("HELLO"d);
+    "HELLo"d.toLowerCase.equal("hello"d);
+    "HELLo"d.toUpperCase.equal("HELLO"d);
+
+    import std.utf : byChar;
+    assert(toLower("\u1Fe2") == toLowerCase("\u1Fe2").byChar.array);
+}
+
+import std.stdio;
+// generic capitalizer on whole range, returns range
+private auto toCapitalizer(alias indexFnUpper, uint maxIdxUpper, alias tableFnUpper,
+                           Range)(Range str)
+    // Accept range of dchar's
+    if (isInputRange!Range &&
+        isSomeChar!(ElementEncodingType!Range) &&
+        ElementEncodingType!Range.sizeof == dchar.sizeof)
+{
+    static struct ToCapitalizerImpl
+    {
+        @property bool empty()
+        {
+            return lower ? lwr.empty : !nLeft && r.empty;
+        }
+
+        @property auto front()
+        {
+            if (lower)
+                return lwr.front;
+
+            if (!nLeft)
+            {
+                dchar c = r.front;
+                const idx = indexFnUpper(c);
+                if (idx == ushort.max)
+                {
+                    buf[0] = c;
+                    nLeft = 1;
+                }
+                else if (idx < maxIdxUpper)
+                {
+                    buf[0] = tableFnUpper(idx);
+                    nLeft = 1;
+                }
+                else
+                {
+                    auto val = tableFnUpper(idx);
+                    // unpack length + codepoint
+                    nLeft = val >> 24;
+                    if (nLeft == 0)
+                        nLeft = 1;
+                    assert(nLeft <= buf.length);
+                    buf[nLeft - 1] = cast(dchar)(val & 0xFF_FFFF);
+                    foreach (j; 1 .. nLeft)
+                        buf[nLeft - j - 1] = tableFnUpper(idx + j);
+                }
+            }
+            return buf[nLeft - 1];
+        }
+
+        void popFront()
+        {
+            if (lower)
+                lwr.popFront();
+            else
+            {
+                if (!nLeft)
+                    front();
+                assert(nLeft);
+                --nLeft;
+                if (!nLeft)
+                {
+                    r.popFront();
+                    lwr = r.toLowerCase();
+                    lower = true;
+                }
+            }
+        }
+
+        static if (isForwardRange!Range)
+        {
+            @property auto save()
+            {
+                auto ret = this;
+                ret.r = r.save;
+                ret.lwr = lwr.save;
+                return ret;
+            }
+        }
+
+      private:
+        Range r;
+        typeof(r.toLowerCase) lwr; // range representing the lower case rest of string
+        bool lower = false;     // false for first character, true for rest of string
+        dchar[3] buf = void;
+        uint nLeft = 0;
+    }
+
+    return ToCapitalizerImpl(str);
+}
+
+/*********************
+ * Capitalize input range or string, meaning convert the first
+ * character to upper case and subsequent characters to lower case.
+ *
+ * Does not allocate memory.
+ * Characters in UTF-8 or UTF-16 format that cannot be decoded
+ * are treated as $(XREF utf, replacementDchar).
+ *
+ * Params:
+ *      str = string or range of characters
+ *
+ * Returns:
+ *      an InputRange of dchars
+ *
+ * See_Also:
+ *      $(LREF toUpper), $(LREF toLower)
+ *      $(LREF toUpperCase), $(LREF toLowerCase)
+ */
+
+auto toCapitalized(Range)(Range str)
+    if (isInputRange!Range && isSomeChar!(ElementEncodingType!Range))
+{
+    static if (ElementEncodingType!Range.sizeof < dchar.sizeof)
+    {
+        import std.utf : byDchar;
+
+        // Decode first
+        return toCapitalizer!UpperTriple(str.byDchar);
+    }
+    else
+    {
+        return toCapitalizer!UpperTriple(str);
+    }
+}
+
+///
+@safe pure unittest
+{
+    import std.algorithm: equal;
+
+    assert("hEllo".toCapitalized.equal("Hello"));
+}
+
+@safe pure nothrow @nogc unittest
+{
+    auto r = "hEllo".toCapitalized();
+    assert(r.front == 'H');
+}
+
+unittest
+{
+    import std.array;
+
+    auto a = "hELLo".toCapitalized;
+    auto savea = a.save;
+    auto s = a.array;
+    assert(s == "Hello");
+    s = savea.array;
+    assert(s == "Hello");
+
+    string[2][] cases =
+    [
+        ["", ""],
+        ["h", "H"],
+        ["H", "H"],
+        ["3", "3"],
+        ["123", "123"],
+        ["h123A", "H123a"],
+        ["феж", "Феж"],
+        ["\u1Fe2", "\u03a5\u0308\u0300"],
+    ];
+
+    foreach (i; 0 .. cases.length)
+    {
+        import std.utf : byChar;
+
+        auto r = cases[i][0].toCapitalized.byChar.array;
+        auto result = cases[i][1];
+        assert(r == result);
+    }
+
+    // Don't call r.front
+    for (auto r = "\u1Fe2".toCapitalized; !r.empty; r.popFront())
+    {
+    }
+
+    import std.algorithm : equal;
+
+    "HELLo"w.toCapitalized.equal("Hello"d);
+    "hElLO"w.toCapitalized.equal("Hello"d);
+    "hello"d.toCapitalized.equal("Hello"d);
+    "HELLO"d.toCapitalized.equal("Hello"d);
+
+    import std.utf : byChar;
+    assert(toCapitalized("\u0130").byChar.array == toUpperCase("\u0130").byChar.array);
 }
 
 // TODO: helper, I wish std.utf was more flexible (and stright)
@@ -8496,7 +8895,7 @@ S toLower(S)(S s) @trusted pure
 
 @trusted unittest //@@@BUG std.format is not @safe
 {
-    import std.string : format;
+    import std.format : format;
     foreach(ch; 0..0x80)
         assert(std.ascii.toLower(ch) == toLower(ch));
     assert(toLower('Я') == 'я');
@@ -8580,6 +8979,10 @@ unittest
     Warning:
     Certain alphabets like German and Greek have no 1:1
     upper-lower mapping. Use overload of toUpper which takes full string instead.
+
+    toUpper can be used as an argument to $(XREF algorithm, map) to produce an algorithm that can
+    convert a range of characters to upper case without allocating memory.
+    A string can then be produced by using $(XREF algorithm, copy) to send it to an $(XREF array, appender).
 +/
 @safe pure nothrow @nogc
 dchar toUpper(dchar c)
@@ -8601,9 +9004,21 @@ dchar toUpper(dchar c)
     return c;
 }
 
+///
+unittest
+{
+    import std.algorithm;
+    import std.uni;
+    import std.array;
+
+    auto abuf = appender!(char[])();
+    "hello".map!toUpper.copy(&abuf);
+    assert(abuf.data == "HELLO");
+}
+
 @trusted unittest
 {
-    import std.string : format;
+    import std.format : format;
     foreach(ch; 0..0x80)
         assert(std.ascii.toUpper(ch) == toUpper(ch));
     assert(toUpper('я') == 'Я');
@@ -8671,7 +9086,7 @@ unittest
 {
     static void doTest(C)(const(C)[] s, const(C)[] trueUp, const(C)[] trueLow)
     {
-        import std.string : format;
+        import std.format : format;
         string diff = "src: %( %x %)\nres: %( %x %)\ntru: %( %x %)";
         auto low = s.toLower() , up = s.toUpper();
         auto lowInp = s.dup, upInp = s.dup;
@@ -8834,7 +9249,7 @@ bool isSymbol(dchar c)
 
 unittest
 {
-    import std.string;
+    import std.format : format;
     assert(isSymbol('\u0024'));
     assert(isSymbol('\u002B'));
     assert(isSymbol('\u005E'));
@@ -8881,7 +9296,7 @@ bool isGraphical(dchar c)
 unittest
 {
     auto set = unicode("Graphical");
-    import std.string;
+    import std.format : format;
     foreach(ch; set.byCodepoint)
         assert(isGraphical(ch), format("%4x", ch));
     foreach(ch; 0..0x4000)

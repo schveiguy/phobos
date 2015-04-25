@@ -1,6 +1,9 @@
 /**
-<script type="text/javascript">inhibitQuickIndex = 1</script>
+Cyclic Redundancy Check (32-bit) implementation.
 
+$(SCRIPT inhibitQuickIndex = 1;)
+
+$(DIVC quickindex,
 $(BOOKTABLE ,
 $(TR $(TH Category) $(TH Functions)
 )
@@ -12,8 +15,8 @@ $(TR $(TDNW OOP API) $(TD $(MYREF CRC32Digest))
 $(TR $(TDNW Helpers) $(TD $(MYREF crcHexString) $(MYREF crc32Of))
 )
 )
+)
 
- * Cyclic Redundancy Check (32-bit) implementation.
  *
  * This module conforms to the APIs defined in $(D std.digest.digest). To understand the
  * differences between the template and the OOP API, see $(D std.digest.digest).
@@ -38,7 +41,6 @@ $(TR $(TDNW Helpers) $(TD $(MYREF crcHexString) $(MYREF crc32Of))
  *
  * Macros:
  * WIKI = Phobos/StdUtilDigestCRC32
- * MYREF = <font face='Consolas, "Bitstream Vera Sans Mono", "Andale Mono", Monaco, "DejaVu Sans Mono", "Lucida Console", monospace'><a href="#$1">$1</a>&nbsp;</font>
  *
  * Standards:
  * Implements the 'common' IEEE CRC32 variant
@@ -306,11 +308,35 @@ unittest
 /**
  * This is a convenience alias for $(XREF digest.digest, digest) using the
  * CRC32 implementation.
+ *
+ * Params:
+ *      data = $(D InputRange) of $(D ElementType) implicitly convertible to $(D ubyte), $(D ubyte[]) or $(D ubyte[num])
+ *             or one or more arrays of any type.
+ *
+ * Returns:
+ *      CRC32 of data
  */
 //simple alias doesn't work here, hope this gets inlined...
-auto crc32Of(T...)(T data)
+ubyte[4] crc32Of(T...)(T data)
 {
     return digest!(CRC32, T)(data);
+}
+
+///
+unittest
+{
+    ubyte[] data = [4,5,7,25];
+    assert(data.crc32Of == [167, 180, 199, 131]);
+
+    import std.utf : byChar;
+    assert("hello"d.byChar.crc32Of == [134, 166, 16, 54]);
+
+    ubyte[4] hash = "abc".crc32Of();
+    assert(hash == digest!CRC32("ab", "c"));
+
+    import std.range : iota;
+    enum ubyte S = 5, F = 66;
+    assert(iota(S, F).crc32Of == [59, 140, 234, 154]);
 }
 
 /**
@@ -321,12 +347,6 @@ public alias crcHexString = toHexString!(Order.decreasing);
 ///ditto
 public alias crcHexString = toHexString!(Order.decreasing, 16);
 
-///
-unittest
-{
-    ubyte[4] hash = crc32Of("abc");
-    assert(hash == digest!CRC32("abc")); //This is the same as above
-}
 
 /**
  * OOP API CRC32 implementation.

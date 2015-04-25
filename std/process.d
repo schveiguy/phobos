@@ -102,7 +102,7 @@ version (Windows)
     import std.windows.syserror;
 }
 
-import std.range.constraints;
+import std.range.primitives;
 import std.conv;
 import std.exception;
 import std.path;
@@ -515,8 +515,6 @@ private Pid spawnProcessImpl(in char[] commandLine,
     // Startup info for CreateProcessW().
     STARTUPINFO_W startinfo;
     startinfo.cb = startinfo.sizeof;
-    startinfo.dwFlags = STARTF_USESTDHANDLES;
-
     static int getFD(ref File f) { return f.isOpen ? f.fileno : -1; }
 
     // Extract file descriptors and HANDLEs from the streams and make the
@@ -525,8 +523,12 @@ private Pid spawnProcessImpl(in char[] commandLine,
                               out int fileDescriptor, out HANDLE handle)
     {
         fileDescriptor = getFD(file);
-        if (fileDescriptor < 0)   handle = GetStdHandle(stdHandle);
-        else                      handle = file.windowsHandle;
+        handle = null;
+        if (fileDescriptor >= 0)
+            handle = file.windowsHandle;
+        // Windows GUI applications have a fd but not a valid Windows HANDLE.
+        if (handle is null || handle == INVALID_HANDLE_VALUE)
+            handle = GetStdHandle(stdHandle);
 
         DWORD dwFlags;
         if (GetHandleInformation(handle, &dwFlags))
@@ -549,6 +551,11 @@ private Pid spawnProcessImpl(in char[] commandLine,
     prepareStream(stdin,  STD_INPUT_HANDLE,  "stdin" , stdinFD,  startinfo.hStdInput );
     prepareStream(stdout, STD_OUTPUT_HANDLE, "stdout", stdoutFD, startinfo.hStdOutput);
     prepareStream(stderr, STD_ERROR_HANDLE,  "stderr", stderrFD, startinfo.hStdError );
+
+    if ((startinfo.hStdInput  != null && startinfo.hStdInput  != INVALID_HANDLE_VALUE)
+     || (startinfo.hStdOutput != null && startinfo.hStdOutput != INVALID_HANDLE_VALUE)
+     || (startinfo.hStdError  != null && startinfo.hStdError  != INVALID_HANDLE_VALUE))
+        startinfo.dwFlags = STARTF_USESTDHANDLES;
 
     // Create process.
     PROCESS_INFORMATION pi;
@@ -879,7 +886,7 @@ unittest // Specifying empty working directory.
     TestScript prog = "";
 
     string directory = "";
-    assert(directory && !directory.length);
+    assert(directory.ptr && !directory.length);
     spawnProcess([prog.path], null, Config.none, directory).wait();
 }
 
@@ -906,6 +913,19 @@ unittest // Reopening the standard streams (issue 13258)
 
     auto lines = readText(tmpFile).splitLines();
     assert(lines == ["foo", "bar"]);
+}
+
+version (Windows)
+unittest // MSVCRT workaround (issue 14422)
+{
+    auto fn = uniqueTempPath();
+    std.file.write(fn, "AAAAAAAAAA");
+
+    auto f = File(fn, "a");
+    spawnProcess(["cmd", "/c", "echo BBBBB"], std.stdio.stdin, f).wait();
+
+    auto data = readText(fn);
+    assert(data == "AAAAAAAAAABBBBB\r\n", data);
 }
 
 /**
@@ -990,7 +1010,7 @@ unittest
     auto env = ["foo" : "bar"];
     assert (wait(spawnShell(cmd~redir, env)) == 0);
     auto f = File(tmpFile, "a");
-    version(Win64) f.seek(0, SEEK_END); // MSVCRT probably seeks to the end when writing, not before
+    version(CRuntime_Microsoft) f.seek(0, SEEK_END); // MSVCRT probably seeks to the end when writing, not before
     assert (wait(spawnShell(cmd, std.stdio.stdin, f, std.stdio.stderr, env)) == 0);
     f.close();
     auto output = std.file.readText(tmpFile);
@@ -1094,7 +1114,7 @@ final class Pid
     This is a number that uniquely identifies the process on the operating
     system, for at least as long as the process is running.  Once $(LREF wait)
     has been called on the $(LREF Pid), this method will return an
-    invalid process ID.
+    invalid (negative) process ID.
     */
     @property int processID() const @safe pure nothrow
     {
@@ -1652,6 +1672,7 @@ $(XREF stdio,StdioException) on failure to redirect any of the streams.$(BR)
 
 Example:
 ---
+// my_application writes to stdout and might write to stderr
 auto pipes = pipeProcess("my_application", Redirect.stdout | Redirect.stderr);
 scope(exit) wait(pipes.pid);
 
@@ -1662,6 +1683,28 @@ foreach (line; pipes.stdout.byLine) output ~= line.idup;
 // Store lines of errors.
 string[] errors;
 foreach (line; pipes.stderr.byLine) errors ~= line.idup;
+
+
+// sendmail expects to read from stdin
+pipes = pipeProcess(["/usr/bin/sendmail", "-t"], Redirect.stdin);
+pipes.stdin.writeln("To: you");
+pipes.stdin.writeln("From: me");
+pipes.stdin.writeln("Subject: dlang");
+pipes.stdin.writeln("");
+pipes.stdin.writeln(message);
+
+// a single period tells sendmail we are finished
+pipes.stdin.writeln(".");
+
+// but at this point sendmail might not see it, we need to flush
+pipes.stdin.flush();
+
+// sendmail happens to exit on ".", but some you have to close the file:
+pipes.stdin.close();
+
+// otherwise this wait will wait forever
+wait(pipes.pid);
+
 ---
 */
 ProcessPipes pipeProcess(in char[][] args,
@@ -2180,8 +2223,8 @@ $(D "/bin/sh").
 @property string userShell() @safe
 {
     version (Windows)      return environment.get("COMSPEC", "cmd.exe");
-    else version (Android) return environment.get("SHELL", "/system/bin/sh");
-    else version (Posix)   return environment.get("SHELL", "/bin/sh");
+    else version (Android) return "/system/bin/sh";
+    else version (Posix)   return "/bin/sh";
 }
 
 

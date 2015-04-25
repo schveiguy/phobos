@@ -3,6 +3,42 @@
 /**
 JavaScript Object Notation
 
+Synopsis:
+----
+    //parse a file or string of json into a usable structure
+    string s = "{ \"language\": \"D\", \"rating\": 3.14, \"code\": \"42\" }";
+    JSONValue j = parseJSON(s);
+    writeln("Language: ", j["language"].str(),
+            " Rating: ", j["rating"].floating()
+    );
+
+    // j and j["language"] return JSONValue,
+    // j["language"].str returns a string
+
+    //check a type
+    long x;
+    if (j["code"].type() == JSON_TYPE.INTEGER)
+    {
+        x = j["code"].integer;
+    }
+    else
+    {
+        x = to!int(j["code"].str);
+    }
+
+    // create a json struct
+    JSONValue jj = [ "language": "D" ];
+    // rating doesnt exist yet, so use .object to assign
+    jj.object["rating"] = JSONValue(3.14);
+    // create an array to assign to list
+    jj.object["list"] = JSONValue( ["a", "b", "c"] );
+    // list already exists, so .object optional
+    jj["list"].array ~= JSONValue("D");
+
+    s = j.toString();
+    writeln(s);
+----
+
 Copyright: Copyright Jeremie Pelletier 2008 - 2009.
 License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 Authors:   Jeremie Pelletier, David Herberth
@@ -18,9 +54,27 @@ Distributed under the Boost Software License, Version 1.0.
 module std.json;
 
 import std.conv;
-import std.range.constraints;
+import std.range.primitives;
 import std.array;
 import std.traits;
+
+/**
+String literals used to represent special float values within JSON strings.
+*/
+enum JSONFloatLiteral : string
+{
+    nan         = "NaN",       /// string representation of floating-point NaN
+    inf         = "Infinite",  /// string representation of floating-point Infinity
+    negativeInf = "-Infinite", /// string representation of floating-point negative Infinity
+}
+
+/**
+Flags that control how json is encoded and parsed.
+*/
+enum JsonOptions {
+    none,                       /// standard parsing
+    specialFloatLiterals = 0x1, /// encode NaN and Inf float values as strings
+}
 
 /**
 JSON type enumeration
@@ -58,10 +112,20 @@ struct JSONValue
     private Store store;
     private JSON_TYPE type_tag;
 
-    /// Specifies the _type of the value stored in this structure.
+    /**
+      Returns the JSON_TYPE of the value stored in this structure.
+    */
     @property JSON_TYPE type() const
     {
         return type_tag;
+    }
+    ///
+    unittest
+    {
+          string s = "{ \"language\": \"D\" }";
+          JSONValue j = parseJSON(s);
+          assert(j.type == JSON_TYPE.OBJECT);
+          assert(j["language"].type == JSON_TYPE.STRING);
     }
 
     /**
@@ -120,6 +184,18 @@ struct JSONValue
     {
         assign(v);
         return store.str;
+    }
+    ///
+    unittest
+    {
+        JSONValue j = [ "language": "D" ];
+
+        // get value
+        assert(j["language"].str == "D");
+
+        // change existing key to new string
+        j["language"].str = "Perl";
+        assert(j["language"].str == "Perl");
     }
 
     /// Value getter/setter for $(D JSON_TYPE.INTEGER).
@@ -195,6 +271,12 @@ struct JSONValue
     {
         assign(v);
         return store.array;
+    }
+
+    /// Test whether the type is $(D JSON_TYPE.NULL)
+    @property bool isNull() const
+    {
+        return type == JSON_TYPE.NULL;
     }
 
     private void assign(T)(T arg)
@@ -311,6 +393,18 @@ struct JSONValue
         store = arg.store;
         type_tag = arg.type;
     }
+    ///
+    unittest
+    {
+        JSONValue j = JSONValue( "a string" );
+        j = JSONValue(42);
+
+        j = JSONValue( [1, 2, 3] );
+        assert(j.type == JSON_TYPE.ARRAY);
+
+        j = JSONValue( ["language": "D"] );
+        assert(j.type == JSON_TYPE.OBJECT);
+    }
 
     void opAssign(T)(T arg) if(!isStaticArray!T && !is(T : JSONValue))
     {
@@ -332,6 +426,13 @@ struct JSONValue
                                 "JSONValue array index is out of range");
         return store.array[i];
     }
+    ///
+    unittest
+    {
+        JSONValue j = JSONValue( [42, 43, 44] );
+        assert( j[0].integer == 42 );
+        assert( j[1].integer == 43 );
+    }
 
     /// Hash syntax for json objects.
     /// Throws $(D JSONException) if $(D type) is not $(D JSON_TYPE.OBJECT).
@@ -342,7 +443,13 @@ struct JSONValue
         return *enforce!JSONException(k in store.object,
                                         "Key not found: " ~ k);
     }
-    
+    ///
+    unittest
+    {
+        JSONValue j = JSONValue( ["language": "D"] );
+        assert( j["language"].str == "D" );
+    }
+
     /// Operator sets $(D value) for element of JSON object by $(D key)
     /// If JSON value is null, then operator initializes it with object and then
     /// sets $(D value) for it.
@@ -352,11 +459,18 @@ struct JSONValue
     {
         enforceEx!JSONException(type == JSON_TYPE.OBJECT || type == JSON_TYPE.NULL,
                                 "JSONValue must be object or null");
-        
+
         if(type == JSON_TYPE.NULL)
             this = (JSONValue[string]).init;
-        
+
         store.object[key] = value;
+    }
+    ///
+    unittest
+    {
+            JSONValue j = JSONValue( ["language": "D"] );
+            j["language"].str = "Perl";
+            assert( j["language"].str == "Perl" );
     }
 
     void opIndexAssign(T)(T arg, size_t i)
@@ -366,6 +480,13 @@ struct JSONValue
         enforceEx!JSONException(i < store.array.length,
                                 "JSONValue array index is out of range");
         store.array[i] = arg;
+    }
+    ///
+    unittest
+    {
+            JSONValue j = JSONValue( ["Perl", "C"] );
+            j[1].str = "D";
+            assert( j[1].str == "D" );
     }
 
     JSONValue opBinary(string op : "~", T)(T arg)
@@ -418,6 +539,44 @@ struct JSONValue
                                 "JSONValue is not an object");
         return k in store.object;
     }
+    ///
+    unittest
+    {
+        JSONValue j = [ "language": "D", "author": "walter" ];
+        string a = ("author" in j).str;
+    }
+
+    bool opEquals(const JSONValue rhs) const
+    {
+        return opEquals(rhs);
+    }
+
+    bool opEquals(ref const JSONValue rhs) const
+    {
+        // Default doesn't work well since store is a union.  Compare only
+        // what should be in store.
+        if (type_tag != rhs.type_tag) return false;
+
+        final switch (type_tag)
+        {
+        case JSON_TYPE.STRING:
+            return store.str == rhs.store.str;
+        case JSON_TYPE.INTEGER:
+            return store.integer == rhs.store.integer;
+        case JSON_TYPE.UINTEGER:
+            return store.uinteger == rhs.store.uinteger;
+        case JSON_TYPE.FLOAT:
+            return store.floating == rhs.store.floating;
+        case JSON_TYPE.OBJECT:
+            return store.object == rhs.store.object;
+        case JSON_TYPE.ARRAY:
+            return store.array == rhs.store.array;
+        case JSON_TYPE.TRUE:
+        case JSON_TYPE.FALSE:
+        case JSON_TYPE.NULL:
+            return true;
+        }
+    }
 
     /// Implements the foreach $(D opApply) interface for json arrays.
     int opApply(int delegate(size_t index, ref JSONValue) dg)
@@ -454,23 +613,31 @@ struct JSONValue
     }
 
     /// Implicitly calls $(D toJSON) on this JSONValue.
-    string toString() const
+    /// $(I options) can be used to tweak the conversion behavior.
+    string toString(in JsonOptions options = JsonOptions.none) const
     {
-        return toJSON(&this);
+        return toJSON(&this, false, options);
     }
 
     /// Implicitly calls $(D toJSON) on this JSONValue, like $(D toString), but
     /// also passes $(I true) as $(I pretty) argument.
-    string toPrettyString() const
+    /// $(I options) can be used to tweak the conversion behavior
+    string toPrettyString(in JsonOptions options = JsonOptions.none) const
     {
-        return toJSON(&this, true);
+        return toJSON(&this, true, options);
     }
 }
 
 /**
 Parses a serialized string and returns a tree of JSON values.
+Throws a $(XREF json,JSONException) if the depth exceeds the max depth.
+Params:
+    json = json-formatted string to parse
+    maxDepth = maximum depth of nesting allowed, -1 disables depth checking
+    options = enable decoding string representations of NaN/Inf as float values
 */
-JSONValue parseJSON(T)(T json, int maxDepth = -1) if(isInputRange!T)
+JSONValue parseJSON(T)(T json, int maxDepth = -1, JsonOptions options = JsonOptions.none)
+if(isInputRange!T)
 {
     import std.ascii : isWhite, isDigit, isHexDigit, toUpper, toLower;
     import std.utf : toUTF8;
@@ -482,11 +649,30 @@ JSONValue parseJSON(T)(T json, int maxDepth = -1) if(isInputRange!T)
 
     int depth = -1;
     dchar next = 0;
-    int line = 1, pos = 1;
+    int line = 1, pos = 0;
 
     void error(string msg)
     {
         throw new JSONException(msg, line, pos);
+    }
+
+    dchar popChar()
+    {
+        if (json.empty) error("Unexpected end of data.");
+        dchar c = json.front;
+        json.popFront();
+
+        if(c == '\n')
+        {
+            line++;
+            pos = 0;
+        }
+        else
+        {
+            pos++;
+        }
+
+        return c;
     }
 
     dchar peekChar()
@@ -494,8 +680,7 @@ JSONValue parseJSON(T)(T json, int maxDepth = -1) if(isInputRange!T)
         if(!next)
         {
             if(json.empty) return '\0';
-            next = json.front;
-            json.popFront();
+            next = popChar();
         }
         return next;
     }
@@ -516,21 +701,7 @@ JSONValue parseJSON(T)(T json, int maxDepth = -1) if(isInputRange!T)
             next = 0;
         }
         else
-        {
-            if(json.empty) error("Unexpected end of data.");
-            c = json.front;
-            json.popFront();
-        }
-
-        if(c == '\n' || (c == '\r' && peekChar() != '\n'))
-        {
-            line++;
-            pos = 1;
-        }
-        else
-        {
-            pos++;
-        }
+            c = popChar();
 
         return c;
     }
@@ -603,7 +774,23 @@ JSONValue parseJSON(T)(T json, int maxDepth = -1) if(isInputRange!T)
                 goto Next;
         }
 
-        return str.data ? str.data : "";
+        return str.data.length ? str.data : "";
+    }
+
+    bool tryGetSpecialFloat(string str, out double val) {
+        switch(str) {
+            case JSONFloatLiteral.nan:
+                val = double.nan;
+                return true;
+            case JSONFloatLiteral.inf:
+                val = double.infinity;
+                return true;
+            case JSONFloatLiteral.negativeInf:
+                val = -double.infinity;
+                return true;
+            default:
+                return false;
+        }
     }
 
     void parseValue(JSONValue* value)
@@ -659,8 +846,19 @@ JSONValue parseJSON(T)(T json, int maxDepth = -1) if(isInputRange!T)
                 break;
 
             case '"':
+                auto str = parseString();
+
+                // if special float parsing is enabled, check if string represents NaN/Inf
+                if ((options & JsonOptions.specialFloatLiterals) && 
+                    tryGetSpecialFloat(str, value.store.floating)) 
+                {
+                    // found a special float, its value was placed in value.store.floating
+                    value.type_tag = JSON_TYPE.FLOAT;
+                    break;
+                }
+
                 value.type_tag = JSON_TYPE.STRING;
-                value.store.str = parseString();
+                value.store.str = str;
                 break;
 
             case '0': .. case '9':
@@ -761,14 +959,28 @@ JSONValue parseJSON(T)(T json, int maxDepth = -1) if(isInputRange!T)
 }
 
 /**
+Parses a serialized string and returns a tree of JSON values.
+Throws a $(XREF json,JSONException) if the depth exceeds the max depth.
+Params:
+    json = json-formatted string to parse
+    options = enable decoding string representations of NaN/Inf as float values
+*/
+JSONValue parseJSON(T)(T json, JsonOptions options)
+if(isInputRange!T)
+{
+    return parseJSON!T(json, -1, options);
+}
+
+/**
 Takes a tree of JSON values and returns the serialized string.
 
 Any Object types will be serialized in a key-sorted order.
 
 If $(D pretty) is false no whitespaces are generated.
 If $(D pretty) is true serialized string is formatted to be human-readable.
+Set the $(specialFloatLiterals) flag is set in $(D options) to encode NaN/Infinity as strings.
 */
-string toJSON(in JSONValue* root, in bool pretty = false)
+string toJSON(in JSONValue* root, in bool pretty = false, in JsonOptions options = JsonOptions.none)
 {
     auto json = appender!string();
 
@@ -890,7 +1102,31 @@ string toJSON(in JSONValue* root, in bool pretty = false)
                 break;
 
             case JSON_TYPE.FLOAT:
-                json.put(to!string(value.store.floating));
+                import std.math : isNaN, isInfinity;
+
+                auto val = value.store.floating;
+
+                if (val.isNaN) {
+                    if (options & JsonOptions.specialFloatLiterals) {
+                        toString(JSONFloatLiteral.nan);
+                    }
+                    else {
+                        throw new JSONException(
+                            "Cannot encode NaN. Consider passing the specialFloatLiterals flag.");
+                    }
+                }
+                else if (val.isInfinity) {
+                    if (options & JsonOptions.specialFloatLiterals) {
+                        toString((val > 0) ?  JSONFloatLiteral.inf : JSONFloatLiteral.negativeInf);
+                    }
+                    else {
+                        throw new JSONException(
+                            "Cannot encode Infinity. Consider passing the specialFloatLiterals flag.");
+                    }
+                }
+                else {
+                    json.put(to!string(val));
+                }
                 break;
 
             case JSON_TYPE.TRUE:
@@ -998,6 +1234,12 @@ unittest
         assertNotThrown(value.integer);
         assert(index == (value.integer-3));
     }
+
+    jv = null;
+    assert(jv.type == JSON_TYPE.NULL);
+    assert(jv.isNull);
+    jv = "foo";
+    assert(!jv.isNull);
 
     jv = JSONValue("value");
     assert(jv.type == JSON_TYPE.STRING);
@@ -1203,29 +1445,88 @@ deprecated unittest
 unittest
 {
     // Bugzilla 12969
-    
+
     JSONValue jv;
     jv["int"] = 123;
-    
+
     assert(jv.type == JSON_TYPE.OBJECT);
     assert("int" in jv);
     assert(jv["int"].integer == 123);
-    
+
     jv["array"] = [1, 2, 3, 4, 5];
-    
+
     assert(jv["array"].type == JSON_TYPE.ARRAY);
     assert(jv["array"][2].integer == 3);
-    
+
     jv["str"] = "D language";
     assert(jv["str"].type == JSON_TYPE.STRING);
     assert(jv["str"].str == "D language");
-    
+
     jv["bool"] = false;
     assert(jv["bool"].type == JSON_TYPE.FALSE);
-    
+
     assert(jv.object.length == 4);
-    
+
     jv = [5, 4, 3, 2, 1];
     assert( jv.type == JSON_TYPE.ARRAY );
     assert( jv[3].integer == 2 );
+}
+
+unittest
+{
+    auto s = q"EOF
+[
+  1,
+  2,
+  3,
+  potato
+]
+EOF";
+
+    import std.exception;
+
+    auto e = collectException!JSONException(parseJSON(s));
+    assert(e.msg == "Unexpected character 'p'. (Line 5:3)", e.msg);
+}
+
+// handling of special float values (NaN, Inf, -Inf)
+unittest
+{
+    import std.math      : isNaN, isInfinity;
+    import std.exception : assertThrown;
+
+    // expected representations of NaN and Inf
+    enum {
+        nanString         = '"' ~ JSONFloatLiteral.nan         ~ '"',
+        infString         = '"' ~ JSONFloatLiteral.inf         ~ '"',
+        negativeInfString = '"' ~ JSONFloatLiteral.negativeInf ~ '"',
+    }
+
+    // with the specialFloatLiterals option, encode NaN/Inf as strings
+    assert(JSONValue(float.nan).toString(JsonOptions.specialFloatLiterals)       == nanString);
+    assert(JSONValue(double.infinity).toString(JsonOptions.specialFloatLiterals) == infString);
+    assert(JSONValue(-real.infinity).toString(JsonOptions.specialFloatLiterals)  == negativeInfString);
+
+    // without the specialFloatLiterals option, throw on encoding NaN/Inf
+    assertThrown!JSONException(JSONValue(float.nan).toString);
+    assertThrown!JSONException(JSONValue(double.infinity).toString);
+    assertThrown!JSONException(JSONValue(-real.infinity).toString);
+
+    // when parsing json with specialFloatLiterals option, decode special strings as floats
+    JSONValue jvNan    = parseJSON(nanString, JsonOptions.specialFloatLiterals);
+    JSONValue jvInf    = parseJSON(infString, JsonOptions.specialFloatLiterals);
+    JSONValue jvNegInf = parseJSON(negativeInfString, JsonOptions.specialFloatLiterals);
+
+    assert(jvNan.floating.isNaN);
+    assert(jvInf.floating.isInfinity    && jvInf.floating > 0);
+    assert(jvNegInf.floating.isInfinity && jvNegInf.floating < 0);
+
+    // when parsing json without the specialFloatLiterals option, decode special strings as strings
+    jvNan    = parseJSON(nanString);
+    jvInf    = parseJSON(infString);
+    jvNegInf = parseJSON(negativeInfString);
+
+    assert(jvNan.str    == JSONFloatLiteral.nan);
+    assert(jvInf.str    == JSONFloatLiteral.inf);
+    assert(jvNegInf.str == JSONFloatLiteral.negativeInf);
 }
