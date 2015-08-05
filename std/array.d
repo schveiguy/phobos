@@ -1290,6 +1290,15 @@ pure nothrow bool sameHead(T)(in T[] lhs, in T[] rhs)
     return lhs.ptr == rhs.ptr;
 }
 
+///
+@safe pure nothrow unittest
+{
+    auto a = [1, 2, 3, 4, 5];
+    auto b = a[0..2];
+
+    assert(a.sameHead(b));
+}
+
 
 /++
     Returns whether the $(D back)s of $(D lhs) and $(D rhs) both refer to the
@@ -1300,6 +1309,15 @@ pure nothrow bool sameHead(T)(in T[] lhs, in T[] rhs)
 pure nothrow bool sameTail(T)(in T[] lhs, in T[] rhs)
 {
     return lhs.ptr + lhs.length == rhs.ptr + rhs.length;
+}
+
+///
+@safe pure nothrow unittest
+{
+    auto a = [1, 2, 3, 4, 5];
+    auto b = a[3..$];
+
+    assert(a.sameTail(b));
 }
 
 @safe pure nothrow unittest
@@ -1355,7 +1373,7 @@ ElementEncodingType!S[] replicate(S)(S s, size_t n) if (isDynamicArray!S)
             r[i .. i + len] = s[];
         }
     }
-    return cast(RetType) r;
+    return r;
 }
 
 /// ditto
@@ -1364,6 +1382,25 @@ if (isInputRange!S && !isDynamicArray!S)
 {
     import std.range : repeat;
     return join(std.range.repeat(s, n));
+}
+
+
+///
+unittest
+{
+    auto a = "abc";
+    auto s = replicate(a, 3);
+
+    assert(s == "abcabcabc");
+
+    auto b = [1, 2, 3];
+    auto c = replicate(b, 3);
+
+    assert(c == [1, 2, 3, 1, 2, 3, 1, 2, 3]);
+
+    auto d = replicate(b, 0);
+
+    assert(d == []);
 }
 
 unittest
@@ -1394,7 +1431,8 @@ delimiter. Runs of whitespace are merged together (no empty words are produced).
 $(D @safe), $(D pure) and $(D CTFE)-able.
 
 See_Also:
-$(XREF algorithm, splitter) for a version that splits using any separator.
+$(XREF_PACK algorithm,iteration,splitter) for a version that splits using any
+separator.
 
 $(XREF regex, splitter) for a version that splits using a regular
 expression defined separator.
@@ -1475,8 +1513,18 @@ unittest //safety, purity, ctfe ...
     assertCTFEable!dg;
 }
 
+///
+unittest
+{
+    assert(split("hello world") == ["hello","world"]);
+    assert(split("192.168.0.1", ".") == ["192", "168", "0", "1"]);
+
+    auto a = split([1, 2, 3, 4, 5, 1, 2, 3, 4, 5], [2, 3]);
+    assert(a == [[1], [4, 5, 1], [4, 5]]);
+}
+
 /++
-Alias for $(XREF algorithm, _splitter).
+Alias for $(XREF_PACK algorithm,iteration,_splitter).
  +/
 deprecated("Please use std.algorithm.iteration.splitter instead.")
 alias splitter = std.algorithm.iteration.splitter;
@@ -1484,9 +1532,10 @@ alias splitter = std.algorithm.iteration.splitter;
 /++
     Eagerly splits $(D range) into an array, using $(D sep) as the delimiter.
 
-    The range must be a $(XREF2 range, isForwardRange, forward range).
-    The separator can be a value of the same type as the elements in $(D range) or
-    it can be another forward range.
+    The _range must be a
+    $(XREF_PACK_NAMED _range,primitives,isForwardRange,forward _range).
+    The separator can be a value of the same type as the elements in $(D range)
+    or it can be another forward _range.
 
     Examples:
         If $(D range) is a $(D string), $(D sep) can be a $(D char) or another
@@ -1495,7 +1544,7 @@ alias splitter = std.algorithm.iteration.splitter;
         The return type will be an array of $(D int) arrays.
 
     Params:
-        range = a forward range.
+        range = a forward _range.
         sep = a value of the same type as the elements of $(D range) or another
         forward range.
 
@@ -1503,7 +1552,8 @@ alias splitter = std.algorithm.iteration.splitter;
         An array containing the divided parts of $(D range).
 
     See_Also:
-        $(XREF algorithm, splitter) for the lazy version of this function.
+        $(XREF_PACK algorithm,iteration,splitter) for the lazy version of this
+        function.
  +/
 auto split(Range, Separator)(Range range, Separator sep)
 if (isForwardRange!Range && is(typeof(ElementType!Range.init == Separator.init)))
@@ -1602,7 +1652,7 @@ private enum bool hasCheapIteration(R) = isArray!R;
         an allocated array of Elements
 
    See_Also:
-        $(XREF algorithm, joiner)
+        $(XREF_PACK algorithm,iteration,joiner)
   +/
 ElementEncodingType!(ElementType!RoR)[] join(RoR, R)(RoR ror, R sep)
     if(isInputRange!RoR &&
@@ -2035,6 +2085,19 @@ if (isOutputRange!(Sink, E) && isDynamicArray!(E[])
         sink.put(to.save);
         subject = balance[from.length .. $];
     }
+}
+
+///
+unittest
+{
+    auto arr = [1, 2, 3, 4, 5];
+    auto from = [2, 3];
+    auto into = [4, 6];
+    auto sink = appender!(int[])();
+
+    replaceInto(sink, arr, from, into);
+
+    assert(sink.data == [1, 4, 6, 4, 5]);
 }
 
 unittest
@@ -2569,6 +2632,15 @@ body
         s[so + slice.length .. s.length];
 
     return cast(inout(T)[]) result;
+}
+
+///
+unittest
+{
+    auto a = [1, 2, 3, 4, 5];
+    auto b = replaceSlice(a, a[1..4], [0, 0, 0]);
+
+    assert(b == [1, 0, 0, 0, 5]);
 }
 
 unittest

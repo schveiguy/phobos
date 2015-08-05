@@ -50,16 +50,11 @@ import std.typetuple; // : TypeTuple, allSatisfy;
 debug(Unique) import std.stdio;
 
 /**
-Encapsulates unique ownership of a resource.
-
-Like C++'s $(LINK2 http://en.cppreference.com/w/cpp/memory/unique_ptr, std::unique_ptr),
-a $(D Unique) maintains sole ownership of a given resource of type $(D T) until
-ownership is transferred or the $(D Unique) falls out of scope.
-Such a transfer can be explicit, using
-$(LINK2 http://dlang.org/phobos/std_algorithm_mutation.html#.move, $(D std.algorithm.move)),
-or implicit, when returning Unique from a function that created it.
-The resource can be a polymorphic class object,
-in which case Unique behaves polymorphically too.
+Encapsulates unique ownership of a resource.  Resource of type $(D T) is
+deleted at the end of the scope, unless it is transferred.  The
+transfer can be explicit, by calling $(D release), or implicit, when
+returning Unique from a function. The resource can be a polymorphic
+class object, in which case Unique behaves polymorphically too.
 */
 struct Unique(T)
 {
@@ -69,18 +64,67 @@ static if (is(T:Object))
 else
     alias RefT = T*;
 
+public:
+    // Deferred in case we get some language support for checking uniqueness.
+    version(None)
+    /**
+    Allows safe construction of $(D Unique). It creates the resource and
+    guarantees unique ownership of it (unless $(D T) publishes aliases of
+    $(D this)).
+    Note: Nested structs/classes cannot be created.
+    Params:
+    args = Arguments to pass to $(D T)'s constructor.
+    ---
+    static class C {}
+    auto u = Unique!(C).create();
+    ---
+    */
+    static Unique!T create(A...)(auto ref A args)
+    if (__traits(compiles, new T(args)))
+    {
+        debug(Unique) writeln("Unique.create for ", T.stringof);
+        Unique!T u;
+        u._p = new T(args);
+        return u;
+    }
+
+    /**
+    Constructor that takes an rvalue.
+    It will ensure uniqueness, as long as the rvalue
+    isn't just a view on an lvalue (e.g., a cast).
+    Typical usage:
+    ----
+    Unique!Foo f = new Foo;
+    ----
+    */
+    this(RefT p)
+    {
+        debug(Unique) writeln("Unique constructor with rvalue");
+        _p = p;
+    }
+    /**
+    Constructor that takes an lvalue. It nulls its source.
+    The nulling will ensure uniqueness as long as there
+    are no previous aliases to the source.
+    */
+    this(ref RefT p)
+    {
+        _p = p;
+        debug(Unique) writeln("Unique constructor nulling source");
+        p = null;
+        assert(p is null);
+    }
     /**
     Constructor that takes a $(D Unique) of a type that is convertible to our type.
 
     Typically used to transfer a $(D Unique) rvalue of derived type to
     a $(D Unique) of base type.
-
     Example:
     ---
-    class C : Object { }
+    class C : Object {}
 
-    Unique!C uc = unique!C();
-    Unique!Object uo = move(uc);
+    Unique!C uc = new C;
+    Unique!Object uo = uc.release;
     ---
     */
     this(U)(Unique!U u)
@@ -102,185 +146,39 @@ else
         u._p = null;
     }
 
-    /// Destroying a $(D Unique) frees the underlying resource.
     ~this()
     {
-        import core.stdc.stdlib : free;
-
         debug(Unique) writeln("Unique destructor of ", (_p is null)? null: _p);
-        if (_p !is null)
-        {
-            destroy(_p);
-
-            static if (hasIndirections!T)
-            {
-                import core.memory : GC;
-                GC.removeRange(cast(void*)_p);
-            }
-
-            free(cast(void*)_p);
-            _p = null;
-        }
+        if (_p !is null) delete _p;
+        _p = null;
     }
-
-    /// Transfer ownership to a $(D Unique) rvalue.
-    deprecated("Please use std.algorithm.move to transfer ownership.")
+    /** Returns whether the resource exists. */
+    @property bool isEmpty() const
+    {
+        return _p is null;
+    }
+    /** Transfer ownership to a $(D Unique) rvalue. Nullifies the current contents. */
     Unique release()
     {
-        import std.algorithm : move;
-
         debug(Unique) writeln("Release");
-        Unique u = move(this);
+        auto u = Unique(_p);
         assert(_p is null);
         debug(Unique) writeln("return from Release");
         return u;
     }
+    /** Forwards member access to contents. */
+    RefT opDot() { return _p; }
 
     /**
-    Returns a reference to the underlying $(D RefT) for use by non-owning code.
-
-    The holder of a $(D Unique!T) is the $(I owner) of that $(D T).
-    For code that does not own the resource (and therefore does not affect
-    its life cycle), pass a plain old reference.
+    Postblit operator is undefined to prevent the cloning of $(D Unique) objects.
     */
-    ref T get()() return @safe
-        if (!is(T == class))
-    {
-        import std.exception : enforce;
-        enforce(!empty, "You cannot get a struct reference from an empty Unique");
-        return *_p;
-    }
-
-    /**
-    Returns a the underlying $(D T) for use by non-owning code.
-
-    Note that getting a class reference is currently unsafe
-    as there is currently no way to stop it from escaping. (see DIP69)
-    */
-    T get()() @system
-        if (is(T == class))
-    {
-        return _p;
-    }
-
-    /// Returns true if the $(D Unique) currently owns an underlying $(D T)
-    @property bool empty() const
-    {
-        return _p is null;
-    }
-
-    /// Allows the $(D Unique) to cast to a boolean value matching
-    /// that of $(D Unique.empty)
-    bool opCast(T : bool)() const { return !empty; }
-
-    /// Forwards the underlying $(D RefT)
-    alias get this;
-
-    /// Postblit operator is undefined to prevent the cloning of $(D Unique) objects.
     @disable this(this);
 
 private:
     RefT _p;
 }
 
-unittest
-{
-    // Ditto...
-    import std.algorithm;
-
-    static class C : Object { }
-
-    Unique!C uc = unique!C();
-    Unique!Object uo = move(uc);
-}
-
-
-/**
-Allows safe construction of $(D Unique). It creates the resource and
-guarantees unique ownership of it (unless $(D T) publishes aliases of
-$(D this)).
-
-Note: Nested classes and structs cannot be created at present time,
-      as there is no way to transfer the closure's frame pointer
-      into this function.
-
-Params:
-    args = Arguments to pass to $(D T)'s constructor.
-
-*/
-Unique!T unique(T, A...)(auto ref A args)
-    if (__traits(compiles, new T(args)))
-{
-    debug(Unique) writeln("Unique.create for ", T.stringof);
-
-    import core.memory : GC;
-    import core.stdc.stdlib : malloc;
-    import std.conv : emplace;
-    import core.exception : onOutOfMemoryError;
-
-    debug(Unique) writeln("Unique.create for ", T.stringof);
-    Unique!T u;
-
-    // TODO: May need to fix alignment?
-    // Does emplace still need to mess with alignment if
-    // the memory is coming from malloc, or does malloc handle that?
-
-    static if (is(T == class))
-        immutable size_t allocSize = __traits(classInstanceSize, T);
-    else
-        immutable size_t allocSize = T.sizeof;
-
-    void* rawMemory = malloc(allocSize);
-    if (!rawMemory)
-        onOutOfMemoryError();
-
-    static if (is(T == class)) {
-        u._p = emplace!T(rawMemory[0 .. allocSize], args);
-    }
-    else {
-        u._p = cast(T*)rawMemory;
-        emplace!T(u._p, args);
-    }
-
-    static if (hasIndirections!T)
-        GC.addRange(rawMemory, allocSize);
-
-    return u;
-}
-
 ///
-unittest
-{
-    struct S { }
-    auto u = unique!S();
-    assert(!u.empty());
-}
-
-unittest
-{
-    // Some real simple stuff
-    static struct S
-    {
-        int i;
-        this(int i) { this.i = i; }
-    }
-
-    // Some quick tests around alias this
-    auto u = unique!S(42);
-    assert(u.i == 42);
-    assert(!u.empty);
-    u.destroy();
-    assert(u.empty);
-    assert(!u); // Since null pointers coerce to false
-
-    auto i = unique!int(25);
-    assert(i.get() == 25);
-    assert(i == 25);
-
-    // opAssign still kicks in, preventing this from compiling:
-    // i = null;
-}
-
 unittest
 {
     static struct S
@@ -288,95 +186,88 @@ unittest
         int i;
         this(int i){this.i = i;}
     }
-
-    // Test implicit return from a function
     Unique!S produce()
     {
         // Construct a unique instance of S on the heap
-        Unique!S ut = unique!S(5);
+        Unique!S ut = new S(5);
         // Implicit transfer of ownership
         return ut;
     }
-
     // Borrow a unique resource by ref
-    // Note that references to Unique should not be passed around to
-    // code that does not play a role in the Unique's life cycle.
-    // (This is what .get() is for)
     void increment(ref Unique!S ur)
     {
         ur.i++;
     }
-
-    // See above
-    void correctIncrement(ref S r)
-    {
-        r.i++;
-    }
-
     void consume(Unique!S u2)
     {
-        assert(u2.i == 8);
+        assert(u2.i == 6);
         // Resource automatically deleted here
     }
-
     Unique!S u1;
-    assert(!u1);
+    assert(u1.isEmpty);
     u1 = produce();
     increment(u1);
     assert(u1.i == 6);
-    correctIncrement(u1.get());
-    // yay alias this
-    correctIncrement(u1);
-    assert(u1.i == 8);
-
-    // consume(u1); // Error: u1 is not copyable
-
+    //consume(u1); // Error: u1 is not copyable
     // Transfer ownership of the resource
-    import std.algorithm : move;
-    consume(move(u1));
-    assert(!u1);
+    consume(u1.release);
+    assert(u1.isEmpty);
 }
 
 unittest
 {
-    // FIXME: Isn't this a bit redundant?
-    // I believe all of these bases are covered in the tests above.
+    // test conversion to base ref
+    int deleted = 0;
+    class C
+    {
+        ~this(){deleted++;}
+    }
+    // constructor conversion
+    Unique!Object u = Unique!C(new C);
+    static assert(!__traits(compiles, {u = new C;}));
+    assert(!u.isEmpty);
+    destroy(u);
+    assert(deleted == 1);
 
+    Unique!C uc = new C;
+    static assert(!__traits(compiles, {Unique!Object uo = uc;}));
+    Unique!Object uo = new C;
+    // opAssign conversion, deleting uo resource first
+    uo = uc.release;
+    assert(uc.isEmpty);
+    assert(!uo.isEmpty);
+    assert(deleted == 2);
+}
+
+unittest
+{
     debug(Unique) writeln("Unique class");
-    static class Bar
+    class Bar
     {
         ~this() { debug(Unique) writeln("    Bar destructor"); }
         int val() const { return 4; }
     }
-
     alias UBar = Unique!(Bar);
-
     UBar g(UBar u)
     {
-        import std.algorithm : move;
         debug(Unique) writeln("inside g");
-        return move(u);
+        return u.release;
     }
-
-    auto ub = unique!Bar();
-    assert(ub);
+    auto ub = UBar(new Bar);
+    assert(!ub.isEmpty);
     assert(ub.val == 4);
-
-    import std.algorithm : move;
+    static assert(!__traits(compiles, {auto ub3 = g(ub);}));
     debug(Unique) writeln("Calling g");
-    auto ub2 = g(move(ub));
+    auto ub2 = g(ub.release);
     debug(Unique) writeln("Returned from g");
-    assert(!ub);
-    assert(ub2);
+    assert(ub.isEmpty);
+    assert(!ub2.isEmpty);
 }
 
 unittest
 {
-    // Same as above, but for a struct
-    import std.algorithm : move;
-
     debug(Unique) writeln("Unique struct");
-    static struct Foo
+    struct Foo
     {
         ~this() { debug(Unique) writeln("    Foo destructor"); }
         int val() const { return 3; }
@@ -386,17 +277,18 @@ unittest
     UFoo f(UFoo u)
     {
         debug(Unique) writeln("inside f");
-        return move(u);
+        return u.release;
     }
 
-    auto uf = unique!Foo();
-    assert(uf);
+    auto uf = UFoo(new Foo);
+    assert(!uf.isEmpty);
     assert(uf.val == 3);
+    static assert(!__traits(compiles, {auto uf3 = f(uf);}));
     debug(Unique) writeln("Unique struct: calling f");
-    auto uf2 = f(move(uf));
+    auto uf2 = f(uf.release);
     debug(Unique) writeln("Unique struct: returned from f");
-    assert(!uf);
-    assert(uf2);
+    assert(uf.isEmpty);
+    assert(!uf2.isEmpty);
 }
 
 
@@ -542,7 +434,7 @@ template Tuple(Specs...)
          * The types of the `Tuple`'s components.
          */
         alias Types = staticMap!(extractType, fieldSpecs);
-        
+
         ///
         unittest
         {
@@ -554,7 +446,7 @@ template Tuple(Specs...)
          * The names of the `Tuple`'s components. Unnamed fields have empty names.
          */
         alias fieldNames = staticMap!(extractName, fieldSpecs);
-        
+
         ///
         unittest
         {
@@ -570,18 +462,18 @@ template Tuple(Specs...)
          */
         Types expand;
         mixin(injectNamedFields());
-        
+
         ///
         unittest
         {
             auto t1 = tuple(1, " hello ", 2.3);
             assert(t1.toString() == `Tuple!(int, string, double)(1, " hello ", 2.3)`);
-            
-            void takeSeveralTypes(int n, string s, bool b) 
+
+            void takeSeveralTypes(int n, string s, bool b)
             {
                 assert(n == 4 && s == "test" && b == false);
             }
-            
+
             auto t2 = tuple(4, "test", false);
             //t.expand acting as a list of values
             takeSeveralTypes(t2.expand);
@@ -617,8 +509,8 @@ template Tuple(Specs...)
          * Params:
          *     values = A list of values that are either the same
          *              types as those given by the `Types` field
-         *              of this `Tuple`, or can implicitly convert 
-         *              to those types. They must be in the same 
+         *              of this `Tuple`, or can implicitly convert
+         *              to those types. They must be in the same
          *              order as they appear in `Types`.
          */
         static if (Types.length > 0)
@@ -628,7 +520,7 @@ template Tuple(Specs...)
                 field[] = values[];
             }
         }
-        
+
         ///
         unittest
         {
@@ -652,7 +544,7 @@ template Tuple(Specs...)
                 field[i] = values[i];
             }
         }
-        
+
         ///
         unittest
         {
@@ -675,15 +567,15 @@ template Tuple(Specs...)
         {
             field[] = another.field[];
         }
-        
+
         ///
         unittest
         {
             alias IntVec = Tuple!(int, int, int);
             alias DubVec = Tuple!(double, double, double);
-            
+
             IntVec iv = tuple(1, 1, 1);
-            
+
             //Ok, int can implicitly convert to double
             DubVec dv = iv;
             //Error: double cannot implicitly convert to int
@@ -694,13 +586,13 @@ template Tuple(Specs...)
          * Comparison for equality. Two `Tuple`s are considered equal
          * $(B iff) they fulfill the following criteria:
          *
-         * $(UL 
+         * $(UL
          *   $(LI Each `Tuple` is the same length.)
-         *   $(LI For each type `T` on the left-hand side and each type 
-         *        `U` on the right-hand side, values of type `T` can be 
+         *   $(LI For each type `T` on the left-hand side and each type
+         *        `U` on the right-hand side, values of type `T` can be
          *        compared with values of type `U`.)
-         *   $(LI For each value `v1` on the left-hand side and each value 
-         *        `v2` on the right-hand side, the expression `v1 == v2` is 
+         *   $(LI For each value `v1` on the left-hand side and each value
+         *        `v2` on the right-hand side, the expression `v1 == v2` is
          *        true.))
          *
          * Params:
@@ -715,14 +607,14 @@ template Tuple(Specs...)
         {
             return field[] == rhs.field[];
         }
-        
+
         /// ditto
         bool opEquals(R)(R rhs) const
         if (areCompatibleTuples!(typeof(this), R, "=="))
         {
             return field[] == rhs.field[];
         }
-        
+
         ///
         unittest
         {
@@ -761,7 +653,7 @@ template Tuple(Specs...)
             }
             return 0;
         }
-        
+
         /// ditto
         int opCmp(R)(R rhs) const
         if (areCompatibleTuples!(typeof(this), R, "<"))
@@ -775,8 +667,8 @@ template Tuple(Specs...)
             }
             return 0;
         }
-        
-        /**  
+
+        /**
             The first `v1` for which `v1 > v2` is true determines
             the result. This could lead to unexpected behaviour.
          */
@@ -785,7 +677,7 @@ template Tuple(Specs...)
             auto tup1 = tuple(1, 1, 1);
             auto tup2 = tuple(1, 100, 100);
             assert(tup1 < tup2);
-            
+
             //Only the first result matters for comparison
             tup1[0] = 2;
             assert(tup1 > tup2);
@@ -795,7 +687,7 @@ template Tuple(Specs...)
          * Assignment from another `Tuple`.
          *
          * Params:
-         *     rhs = The source `Tuple` to assign from. Each element of the 
+         *     rhs = The source `Tuple` to assign from. Each element of the
          *           source `Tuple` must be implicitly assignable to each
          *           respective element of the target `Tuple`.
          */
@@ -832,8 +724,8 @@ template Tuple(Specs...)
          *     to = A `size_t` designating the ending position (exclusive) of the slice.
          *
          * Returns:
-         *     A new `Tuple` that is a slice from `[from, to$(RPAREN)` of the original. 
-         *     It has the same types and values as the range `[from, to$(RPAREN)` in 
+         *     A new `Tuple` that is a slice from `[from, to$(RPAREN)` of the original.
+         *     It has the same types and values as the range `[from, to$(RPAREN)` in
          *     the original.
          */
         @property
@@ -842,7 +734,7 @@ template Tuple(Specs...)
         {
             return *cast(typeof(return)*) &(field[from]);
         }
-        
+
         ///
         unittest
         {
@@ -856,7 +748,7 @@ template Tuple(Specs...)
 
         /**
             Creates a hash of this `Tuple`.
-            
+
             Returns:
                 A `size_t` representing the hash of this `Tuple`.
          */
@@ -867,7 +759,7 @@ template Tuple(Specs...)
                 h += typeid(T).getHash(cast(const void*)&field[i]);
             return h;
         }
-        
+
         void toString(DG)(scope DG sink)
         {
             enum header = typeof(this).stringof ~ "(",
@@ -921,7 +813,7 @@ unittest
     auto y = point[1];
 }
 
-/** 
+/**
     `Tuple` members can be named. It is legal to mix named and unnamed
     members. The method above is still applicable to all fields.
  */
@@ -950,10 +842,10 @@ unittest
 
 /**
     Create a copy of a `Tuple` with its fields in reverse order.
-    
+
     Params:
         t = The `Tuple` to copy.
-    
+
     Returns:
         A copy of `t` with its fields in reverse order.
  */
@@ -1389,17 +1281,17 @@ unittest
 /**
     Constructs a $(D Tuple) object instantiated and initialized according to
     the given arguments.
-    
+
     Params:
         Names = A list of strings naming each successive field of the `Tuple`.
                 Each name matches up with the corresponding field given by `Args`.
                 A name does not have to be provided for every field, but as
                 the names must proceed in order, it is not possible to skip
                 one field and name the next after it.
-                
+
         args = Values to initialize the `Tuple` with. The `Tuple`'s type will
                be inferred from the types of the values given.
-    
+
     Returns:
         A new `Tuple` with its type inferred from the arguments given.
 */
@@ -1460,10 +1352,10 @@ unittest
 
 /**
     Returns $(D true) if and only if $(D T) is an instance of $(D std.typecons.Tuple).
-    
+
     Params:
         T = The type to check.
-        
+
     Returns:
         true if `T` is a `Tuple` type, false otherwise.
  */
@@ -1503,7 +1395,7 @@ unittest
 
 // used by both Rebindable and UnqualRef
 private mixin template RebindableCommon(T, U, alias This)
-    if (is(T == class) || is(T == interface))
+    if (is(T == class) || is(T == interface) || isAssociativeArray!T)
 {
     private union
     {
@@ -1550,8 +1442,7 @@ private mixin template RebindableCommon(T, U, alias This)
 $(D Rebindable!(T)) is a simple, efficient wrapper that behaves just
 like an object of type $(D T), except that you can reassign it to
 refer to another object. For completeness, $(D Rebindable!(T)) aliases
-itself away to $(D T) if $(D T) is a non-const object type. However,
-$(D Rebindable!(T)) does not compile if $(D T) is a non-class type.
+itself away to $(D T) if $(D T) is a non-const object type.
 
 You may want to use $(D Rebindable) when you want to have mutable
 storage referring to $(D const) objects, for example an array of
@@ -1560,9 +1451,10 @@ break the soundness of D's type system and does not incur any of the
 risks usually associated with $(D cast).
 
 Params:
-    T = An object, interface, or array slice type.
+    T = An object, interface, array slice type, or associative array type.
  */
-template Rebindable(T) if (is(T == class) || is(T == interface) || isDynamicArray!T)
+template Rebindable(T)
+    if (is(T == class) || is(T == interface) || isDynamicArray!T || isAssociativeArray!T)
 {
     static if (is(T == const U, U) || is(T == immutable U, U))
     {
@@ -1599,7 +1491,7 @@ unittest
 }
 
 /**
-    However, $(D Rebindable!(Widget)) does allow reassignment, 
+    However, $(D Rebindable!(Widget)) does allow reassignment,
     while otherwise behaving exactly like a $(D const Widget).
  */
 unittest
@@ -1619,14 +1511,14 @@ Convenience function for creating a $(D Rebindable) using automatic type
 inference.
 
 Params:
-    obj = A reference to an object or interface, or an array slice
+    obj = A reference to an object, interface, associative array, or an array slice
           to initialize the `Rebindable` with.
-          
+
 Returns:
     A newly constructed `Rebindable` initialized with the given reference.
 */
 Rebindable!T rebindable(T)(T obj)
-if (is(T == class) || is(T == interface) || isDynamicArray!T)
+    if (is(T == class) || is(T == interface) || isDynamicArray!T || isAssociativeArray!T)
 {
     typeof(return) ret;
     ret = obj;
@@ -1730,13 +1622,21 @@ unittest
     // Issue 12046
     static assert(!__traits(compiles, Rebindable!(int[1])));
     static assert(!__traits(compiles, Rebindable!(const int[1])));
+
+    // Pull request 3341
+    Rebindable!(immutable int[int]) pr3341 = [123:345];
+    assert(pr3341[123] == 345);
+    immutable int[int] pr3341_aa = [321:543];
+    pr3341 = pr3341_aa;
+    assert(pr3341[321] == 543);
+    assert(rebindable(pr3341_aa)[321] == 543);
 }
 
 /**
     Similar to $(D Rebindable!(T)) but strips all qualifiers from the reference as
     opposed to just constness / immutability. Primary intended use case is with
     shared (having thread-local reference to shared class data)
-    
+
     Params:
         T = A class or interface type.
  */
@@ -1794,13 +1694,13 @@ unittest
   Order the provided members to minimize size while preserving alignment.
   Alignment is not always optimal for 80-bit reals, nor for structs declared
   as align(1).
-  
+
   Params:
-      E = A list of the types to be aligned, representing fields 
+      E = A list of the types to be aligned, representing fields
           of an aggregate such as a `struct` or `class`.
-      
+
       names = The names of the fields that are to be aligned.
-      
+
   Returns:
       A string to be mixed in to an aggregate, such as a `struct` or `class`.
 */
@@ -1909,13 +1809,13 @@ Returns:
     {
         return _isNull;
     }
-    
+
 ///
 unittest
 {
     Nullable!int ni;
     assert(ni.isNull);
-    
+
     ni = 0;
     assert(!ni.isNull);
 }
@@ -1928,13 +1828,13 @@ Forces $(D this) to the null state.
         .destroy(_value);
         _isNull = true;
     }
-    
+
 ///
 unittest
 {
     Nullable!int ni = 0;
     assert(!ni.isNull);
-    
+
     ni.nullify();
     assert(ni.isNull);
 }
@@ -1956,7 +1856,7 @@ Params:
     If this `Nullable` wraps a type that already has a null value
     (such as a pointer), then assigning the null value to this
     `Nullable` is no different than assigning any other value of
-    type `T`, and the resulting code will look very strange. It 
+    type `T`, and the resulting code will look very strange. It
     is strongly recommended that this be avoided by instead using
     the version of `Nullable` that takes an additional `nullValue`
     template argument.
@@ -1966,7 +1866,7 @@ unittest
     //Passes
     Nullable!(int*) npi;
     assert(npi.isNull);
-    
+
     //Passes?!
     npi = null;
     assert(!npi.isNull);
@@ -1985,17 +1885,17 @@ Returns:
         assert(!isNull, message);
         return _value;
     }
-    
+
 ///
 unittest
 {
     import std.exception: assertThrown, assertNotThrown;
-    
+
     Nullable!int ni;
-    //`get` is implicitly called. Will throw 
+    //`get` is implicitly called. Will throw
     //an AssertError in non-release mode
     assertThrown!Throwable(ni == 0);
-    
+
     ni = 0;
     assertNotThrown!Throwable(ni == 0);
 }
@@ -2016,21 +1916,21 @@ unittest
         string address;
         int customerNum;
     }
-    
+
     Nullable!CustomerRecord getByName(string name)
     {
         //A bunch of hairy stuff
-        
+
         return Nullable!CustomerRecord.init;
     }
-    
+
     auto queryResult = getByName("Doe, John");
     if (!queryResult.isNull)
     {
         //Process Mr. Doe's customer record
         auto address = queryResult.address;
         auto customerNum = queryResult.customerNum;
-        
+
         //Do some things with this customer's info
     }
     else
@@ -2320,7 +2220,7 @@ Nullable!T) because it does not need to store an extra $(D bool).
 
 Params:
     T = The wrapped type for which Nullable provides a null value.
-    
+
     nullValue = The null value which denotes the null state of this
                 `Nullable`. Must be of type `T`.
  */
@@ -2375,14 +2275,14 @@ Returns:
             return _value == nullValue;
         }
     }
-    
+
 ///
 unittest
 {
     Nullable!(int, -1) ni;
     //Initialized to "null" state
     assert(ni.isNull);
-    
+
     ni = 0;
     assert(!ni.isNull);
 }
@@ -2394,20 +2294,20 @@ Forces $(D this) to the null state.
     {
         _value = nullValue;
     }
-    
+
 ///
 unittest
 {
     Nullable!(int, -1) ni = 0;
     assert(!ni.isNull);
-    
+
     ni = -1;
     assert(ni.isNull);
 }
 
 /**
 Assigns $(D value) to the internally-held state. If the assignment
-succeeds, $(D this) becomes non-null. No null checks are made. Note 
+succeeds, $(D this) becomes non-null. No null checks are made. Note
 that the assignment may leave $(D this) in the null state.
 
 Params:
@@ -2419,13 +2319,13 @@ Params:
     {
         _value = value;
     }
-    
+
 /**
     If this `Nullable` wraps a type that already has a null value
     (such as a pointer), and that null value is not given for
-    `nullValue`, then assigning the null value to this `Nullable` 
-    is no different than assigning any other value of type `T`, 
-    and the resulting code will look very strange. It is strongly 
+    `nullValue`, then assigning the null value to this `Nullable`
+    is no different than assigning any other value of type `T`,
+    and the resulting code will look very strange. It is strongly
     recommended that this be avoided by using `T`'s "built in"
     null value for `nullValue`.
  */
@@ -2435,7 +2335,7 @@ unittest
     enum nullVal = cast(int*)0xCAFEBABE;
     Nullable!(int*, nullVal) npi;
     assert(npi.isNull);
-    
+
     //Passes?!
     npi = null;
     assert(!npi.isNull);
@@ -2456,17 +2356,17 @@ Returns:
         assert(!isNull, message);
         return _value;
     }
-    
+
 ///
 unittest
 {
     import std.exception: assertThrown, assertNotThrown;
-    
+
     Nullable!(int, -1) ni;
-    //`get` is implicitly called. Will throw 
+    //`get` is implicitly called. Will throw
     //an error in non-release mode
     assertThrown!Throwable(ni == 0);
-    
+
     ni = 0;
     assertNotThrown!Throwable(ni == 0);
 }
@@ -2484,14 +2384,14 @@ unittest
     Nullable!(size_t, size_t.max) indexOf(string[] haystack, string needle)
     {
         //Find the needle, returning -1 if not found
-        
+
         return Nullable!(size_t, size_t.max).init;
     }
-    
+
     void sendLunchInvite(string name)
     {
     }
-    
+
     //It's safer than C...
     auto coworkers = ["Jane", "Jim", "Marry", "Fred"];
     auto pos = indexOf(coworkers, "Bob");
@@ -2504,7 +2404,7 @@ unittest
     {
         //Bob not found; report the error
     }
-    
+
     //And there's no overhead
     static assert(Nullable!(size_t, size_t.max).sizeof == size_t.sizeof);
 }
@@ -2683,13 +2583,13 @@ Params:
     {
         _value = value;
     }
-    
+
     ///
     unittest
     {
         NullableRef!int nr = new int(42);
         assert(nr == 42);
-        
+
         int* n = new int(1);
         nr.bind(n);
         assert(nr == 1);
@@ -2705,13 +2605,13 @@ Returns:
     {
         return _value is null;
     }
-    
+
     ///
     unittest
     {
         NullableRef!int nr;
         assert(nr.isNull);
-        
+
         int* n = new int(42);
         nr.bind(n);
         assert(!nr.isNull && nr == 42);
@@ -2724,13 +2624,13 @@ Forces $(D this) to the null state.
     {
         _value = null;
     }
-    
+
     ///
     unittest
     {
         NullableRef!int nr = new int(42);
         assert(!nr.isNull);
-        
+
         nr.nullify();
         assert(nr.isNull);
     }
@@ -2751,16 +2651,16 @@ Params:
         assert(!isNull, message);
         *_value = value;
     }
-    
+
     ///
     unittest
     {
         import std.exception: assertThrown, assertNotThrown;
-        
+
         NullableRef!int nr;
         assert(nr.isNull);
         assertThrown!Throwable(nr = 42);
-        
+
         nr.bind(new int(0));
         assert(!nr.isNull);
         assertNotThrown!Throwable(nr = 42);
@@ -2777,17 +2677,17 @@ This function is also called for the implicit conversion to $(D T).
         assert(!isNull, message);
         return *_value;
     }
-    
+
     ///
     unittest
     {
         import std.exception: assertThrown, assertNotThrown;
-        
+
         NullableRef!int nr;
-        //`get` is implicitly called. Will throw 
+        //`get` is implicitly called. Will throw
         //an error in non-release mode
         assertThrown!Throwable(nr == 0);
-        
+
         nr.bind(new int(0));
         assertNotThrown!Throwable(nr == 0);
     }
@@ -3011,18 +2911,13 @@ unittest
         inout(Object) foo() inout;
     }
     BlackHole!Foo o;
-
-    // Bugzilla 12464
-    import std.stream;
-    import std.typecons;
-    BlackHole!OutputStream dout;
 }
 
 
 /**
 $(D WhiteHole!Base) is a subclass of $(D Base) which automatically implements
-all abstract member functions as functions that always fail. These functions 
-simply throw an $(D Error) and never return. `Whitehole` is useful for 
+all abstract member functions as functions that always fail. These functions
+simply throw an $(D Error) and never return. `Whitehole` is useful for
 trapping the use of class member functions that haven't been implemented.
 
 The name came from
@@ -3448,7 +3343,8 @@ unittest
 version(unittest)
 {
     // Issue 10647
-    private string generateDoNothing(C, alias fun)() @property
+    // Add prefix "issue10647_" as a workaround for issue 1238
+    private string issue10647_generateDoNothing(C, alias fun)() @property
     {
         string stmt;
 
@@ -3462,25 +3358,25 @@ version(unittest)
         return stmt;
     }
 
-    private template isAlwaysTrue(alias fun)
+    private template issue10647_isAlwaysTrue(alias fun)
     {
-        enum isAlwaysTrue = true;
+        enum issue10647_isAlwaysTrue = true;
     }
 
     // Do nothing template
-    private template DoNothing(Base)
+    private template issue10647_DoNothing(Base)
     {
-        alias DoNothing = AutoImplement!(Base, generateDoNothing, isAlwaysTrue);
+        alias issue10647_DoNothing = AutoImplement!(Base, issue10647_generateDoNothing, issue10647_isAlwaysTrue);
     }
 
     // A class to be overridden
-    private class Foo{
+    private class issue10647_Foo{
         void bar(int a) { }
     }
 }
 unittest
 {
-    auto foo = new DoNothing!Foo();
+    auto foo = new issue10647_DoNothing!issue10647_Foo();
     foo.bar(13);
 }
 
@@ -4820,11 +4716,11 @@ Assignment operators
         (but will still assert if not initialized).
          */
         @property
-        ref T refCountedPayload();
+        ref T refCountedPayload() return;
 
         /// ditto
         @property nothrow @safe
-        ref inout(T) refCountedPayload() inout;
+        ref inout(T) refCountedPayload() inout return;
     }
     else
     {
@@ -4832,7 +4728,7 @@ Assignment operators
         {
             //Can't use inout here because of potential mutation
             @property
-            ref T refCountedPayload()
+            ref T refCountedPayload() return
             {
                 _refCounted.ensureInitialized();
                 return _refCounted._store._payload;
@@ -4840,7 +4736,7 @@ Assignment operators
         }
 
         @property nothrow @safe
-        ref inout(T) refCountedPayload() inout
+        ref inout(T) refCountedPayload() inout return
         {
             assert(_refCounted.isInitialized, "Attempted to access an uninitialized payload.");
             return _refCounted._store._payload;
@@ -5001,15 +4897,15 @@ unittest
 
 /**
     Creates a proxy for the value `a` that will forward all operations
-    while disabling implicit conversions. The aliased item `a` must be 
-    an $(B lvalue). This is useful for creating a new type from the 
-    "base" type (though this is $(B not) a subtype-supertype 
-    relationship; the new type is not related to the old type in any way, 
+    while disabling implicit conversions. The aliased item `a` must be
+    an $(B lvalue). This is useful for creating a new type from the
+    "base" type (though this is $(B not) a subtype-supertype
+    relationship; the new type is not related to the old type in any way,
     by design).
-    
+
     The new type supports all operations that the underlying type does,
     including all operators such as `+`, `--`, `<`, `[]`, etc.
-    
+
     Params:
         a = The value to act as a proxy for all operations. It must
             be an lvalue.
@@ -5248,29 +5144,29 @@ unittest
     {
         //Won't work; the literal '1' is
         //is an rvalue, not an lvalue
-        //mixin Proxy!1; 
-        
+        //mixin Proxy!1;
+
         //Okay, n is an lvalue
         int n;
         mixin Proxy!n;
-        
+
         this(int n) { this.n = n; }
     }
-    
+
     NewIntType nit = 0;
     nit++;
     assert(nit == 1);
-    
-    
+
+
     struct NewObjectType
     {
         Object obj;
         //Ok, obj is an lvalue
         mixin Proxy!obj;
-        
+
         this (Object o) { obj = o; }
     }
-    
+
     NewObjectType not = new Object();
     assert(__traits(compiles, not.toHash()));
 }
@@ -5278,24 +5174,24 @@ unittest
 /**
     There is one exception to the fact that the new type is not related to the
     old type. $(LINK2 http://dlang.org/function.html#pseudo-member, Pseudo-member)
-    functions are usable with the new type; they will be forwarded on to the 
+    functions are usable with the new type; they will be forwarded on to the
     proxied value.
  */
 unittest
 {
     import std.math;
-    
+
     float f = 1.0;
     assert(!f.isInfinity);
-    
+
     struct NewFloat
     {
         float _;
         mixin Proxy!_;
-        
+
         this(float f) { _ = f; }
     }
- 
+
     NewFloat nf = 1.0f;
     assert(!nf.isInfinity);
 }
@@ -6458,7 +6354,7 @@ template isBitFlagEnum(E)
 }
 
 /**
-A typesafe structure for storing combination of enum values.
+A typesafe structure for storing combinations of enum values.
 
 This template defines a simple struct to represent bitwise OR combinations of
 enum values. It can be used if all the enum values are integral constants with
@@ -6690,3 +6586,219 @@ public:
     auto value = cast(int)flags_A;
     assert(value == Enum.A);
 }
+
+// ReplaceType
+/**
+Replaces all occurrences of `From` into `To`, in one or more types `T`. For
+example, $(D ReplaceType!(int, uint, Tuple!(int, float)[string])) yields
+$(D Tuple!(uint, float)[string]). The types in which replacement is performed
+may be arbitrarily complex, including qualifiers, built-in type constructors
+(pointers, arrays, associative arrays, functions, and delegates), and template
+instantiations; replacement proceeds transitively through the type definition.
+However, member types in `struct`s or `class`es are not replaced because there
+are no ways to express the types resulting after replacement.
+
+This is an advanced type manipulation necessary e.g. for replacing the
+placeholder type `This` in $(XREF variant, Algebraic).
+
+Returns: `ReplaceType` aliases itself to the type(s) that result after
+replacement.
+*/
+template ReplaceType(From, To, T...)
+{
+    static if (T.length == 1)
+    {
+        static if (is(T[0] == From)) alias ReplaceType = To;
+        else static if (is(T[0] == const(U), U))
+            alias ReplaceType = const(ReplaceType!(From, To, U));
+        else static if (is(T[0] == immutable(U), U))
+            alias ReplaceType = immutable(ReplaceType!(From, To, U));
+        else static if (is(T[0] == shared(U), U))
+            alias ReplaceType = shared(ReplaceType!(From, To, U));
+        else static if (is(T[0] == U*, U))
+        {
+            static if (is(U == function) || is(U == delegate))
+            {
+                mixin("alias ReplaceType = "
+                    ~replaceTypeInFunctionType!(From, To, T[0])~";");
+            }
+            else
+            {
+                alias ReplaceType = ReplaceType!(From, To, U)*;
+            }
+        }
+        else static if (is(T[0] == delegate))
+        {
+            mixin("alias ReplaceType = "
+                ~replaceTypeInFunctionType!(From, To, T[0])~";");
+        }
+        else static if (is(T[0] == function))
+        {
+            static assert(0, "Function types not supported,"
+                " use a function pointer type instead of "~T[0].stringof);
+        }
+        else static if (is(T[0] == U[], U))
+            alias ReplaceType = ReplaceType!(From, To, U)[];
+        else static if (is(T[0] == U[n], U, size_t n))
+            alias ReplaceType = ReplaceType!(From, To, U)[n];
+        else static if (is(T[0] == U[V], U, V))
+            alias ReplaceType =
+                ReplaceType!(From, To, U)[ReplaceType!(From, To, V)];
+        else static if (is(T[0] : U!V, alias U, V...))
+            alias ReplaceType = U!(ReplaceType!(From, To, V));
+        else alias ReplaceType = T[0];
+    }
+    else static if (T.length > 1)
+    {
+        alias ReplaceType = TypeTuple!(ReplaceType!(From, To, T[0]),
+            ReplaceType!(From, To, T[1 .. $]));
+    }
+    else
+    {
+        alias ReplaceType = TypeTuple!();
+    }
+}
+
+///
+unittest
+{
+    static assert(
+        is(ReplaceType!(int, string, int[]) == string[]) &&
+        is(ReplaceType!(int, string, int[int]) == string[string]) &&
+        is(ReplaceType!(int, string, const(int)[]) == const(string)[]) &&
+        is(ReplaceType!(int, string, Tuple!(int[], float))
+            == Tuple!(string[], float))
+    );
+}
+
+private string replaceTypeInFunctionType(X, Y, fun)()
+{
+    alias storageClasses = ParameterStorageClassTuple!fun;
+    string result;
+    result ~= "extern(" ~ functionLinkage!fun ~ ") ";
+    static if (functionAttributes!fun & FunctionAttribute.ref_)
+    {
+        result ~= "ref ";
+    }
+    result ~= (ReplaceType!(X, Y, ReturnType!fun)).stringof;
+    static if (is(fun == delegate))
+        result ~= " delegate";
+    else
+        result ~= " function";
+    result ~= "(";
+    foreach (i, T; Parameters!fun)
+    {
+        if (i) result ~= ", ";
+        if (storageClasses[i] & ParameterStorageClass.scope_)
+            result ~= "scope ";
+        if (storageClasses[i] & ParameterStorageClass.out_)
+            result ~= "out ";
+        if (storageClasses[i] & ParameterStorageClass.ref_)
+            result ~= "ref ";
+        if (storageClasses[i] & ParameterStorageClass.lazy_)
+            result ~= "lazy ";
+        if (storageClasses[i] & ParameterStorageClass.return_)
+            result ~= "return ";
+        result ~= ReplaceType!(X, Y, T).stringof;
+    }
+    static if (variadicFunctionStyle!fun != Variadic.no)
+    {
+        result ~= ", ...";
+    }
+    result ~= ")";
+    alias attributes = functionAttributes!fun;
+    static if (attributes & FunctionAttribute.pure_)
+        result ~= " pure";
+    static if (attributes & FunctionAttribute.nothrow_)
+        result ~= " nothrow";
+    static if (attributes & FunctionAttribute.property)
+        result ~= " @property";
+    static if (attributes & FunctionAttribute.trusted)
+        result ~= " @trusted";
+    static if (attributes & FunctionAttribute.safe)
+        result ~= " @safe";
+    static if (attributes & FunctionAttribute.nogc)
+        result ~= " @nogc";
+    static if (attributes & FunctionAttribute.system)
+        result ~= " @system";
+    static if (attributes & FunctionAttribute.const_)
+        result ~= " @const";
+    static if (attributes & FunctionAttribute.immutable_)
+        result ~= " immutable";
+    static if (attributes & FunctionAttribute.inout_)
+        result ~= " inout";
+    static if (attributes & FunctionAttribute.shared_)
+        result ~= " shared";
+    static if (attributes & FunctionAttribute.return_)
+        result ~= " return";
+    return result;
+}
+
+unittest
+{
+    template Test(Ts...)
+    {
+        static if (Ts.length)
+        {
+            //pragma(msg, "Testing: ReplaceType!("~Ts[0].stringof~", "
+            //    ~Ts[1].stringof~", "~Ts[2].stringof~")");
+            static assert(is(ReplaceType!(Ts[0], Ts[1], Ts[2]) == Ts[3]),
+                "ReplaceType!("~Ts[0].stringof~", "~Ts[1].stringof~", "
+                    ~Ts[2].stringof~") == "
+                    ~ReplaceType!(Ts[0], Ts[1], Ts[2]).stringof);
+            alias Test = Test!(Ts[4 .. $]);
+        }
+        else alias Test = void;
+    }
+
+    //import core.stdc.stdio;
+    alias RefFun1 = ref int function(float, long);
+    alias RefFun2 = ref float function(float, long);
+    extern(C) int printf(const char*, ...) nothrow @nogc @system;
+    extern(C) float floatPrintf(const char*, ...) nothrow @nogc @system;
+    int func(float);
+
+    alias Pass = Test!(
+        int, float, typeof(&func), float delegate(float),
+        int, float, typeof(&printf), typeof(&floatPrintf),
+        int, float, int function(out long, ...),
+            float function(out long, ...),
+        int, float, int function(ref float, long),
+            float function(ref float, long),
+        int, float, int function(ref int, long),
+            float function(ref float, long),
+        int, float, int function(out int, long),
+            float function(out float, long),
+        int, float, int function(lazy int, long),
+            float function(lazy float, long),
+        int, float, int function(out long, ref const int),
+            float function(out long, ref const float),
+        int, int, int, int,
+        int, float, int, float,
+        int, float, const int, const float,
+        int, float, immutable int, immutable float,
+        int, float, shared int, shared float,
+        int, float, int*, float*,
+        int, float, const(int)*, const(float)*,
+        int, float, const(int*), const(float*),
+        const(int)*, float, const(int*), const(float),
+        int*, float, const(int)*, const(int)*,
+        int, float, int[], float[],
+        int, float, int[42], float[42],
+        int, float, const(int)[42], const(float)[42],
+        int, float, const(int[42]), const(float[42]),
+        int, float, int[int], float[float],
+        int, float, int[double], float[double],
+        int, float, double[int], double[float],
+        int, float, int function(float, long), float function(float, long),
+        int, float, int function(float), float function(float),
+        int, float, int function(float, int), float function(float, float),
+        int, float, int delegate(float, long), float delegate(float, long),
+        int, float, int delegate(float), float delegate(float),
+        int, float, int delegate(float, int), float delegate(float, float),
+        int, float, Unique!int, Unique!float,
+        int, float, Tuple!(float, int), Tuple!(float, float),
+        int, float, RefFun1, RefFun2,
+    );
+}
+

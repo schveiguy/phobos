@@ -562,8 +562,9 @@ private Pid spawnProcessImpl(in char[] commandLine,
     DWORD dwCreationFlags =
         CREATE_UNICODE_ENVIRONMENT |
         ((config & Config.suppressConsole) ? CREATE_NO_WINDOW : 0);
+    auto pworkDir = workDir.tempCStringW();     // workaround until Bugzilla 14696 is fixed
     if (!CreateProcessW(null, commandLine.tempCStringW().buffPtr, null, null, true, dwCreationFlags,
-                        envz, workDir.length ? workDir.tempCStringW() : null, &startinfo, &pi))
+                        envz, workDir.length ? pworkDir : null, &startinfo, &pi))
         throw ProcessException.newFromLastError("Failed to spawn new process");
 
     // figure out if we should close any of the streams
@@ -2181,7 +2182,7 @@ class ProcessException : Exception
     {
         import core.stdc.errno;
         import core.stdc.string;
-        version (linux)
+        version (CRuntime_Glibc)
         {
             char[1024] buf;
             auto errnoMsg = to!string(
@@ -3199,7 +3200,8 @@ private void toAStringz(in string[] a, const(char)**az)
 //{
 //    int spawnvp(int mode, string pathname, string[] argv)
 //    {
-//      char** argv_ = cast(char**)alloca((char*).sizeof * (1 + argv.length));
+//      char** argv_ = cast(char**)core.stdc.stdlib.malloc((char*).sizeof * (1 + argv.length));
+//      scope(exit) core.stdc.stdlib.free(argv_);
 //
 //      toAStringz(argv, argv_);
 //
@@ -3217,7 +3219,8 @@ alias P_NOWAIT = _P_NOWAIT;
 deprecated("Please use spawnProcess instead")
 int spawnvp(int mode, string pathname, string[] argv)
 {
-    auto argv_ = cast(const(char)**)alloca((char*).sizeof * (1 + argv.length));
+    auto argv_ = cast(const(char)**)core.stdc.stdlib.malloc((char*).sizeof * (1 + argv.length));
+    scope(exit) core.stdc.stdlib.free(argv_);
 
     toAStringz(argv, argv_);
 
@@ -3421,7 +3424,8 @@ extern(C)
 
 private int execv_(in string pathname, in string[] argv)
 {
-    auto argv_ = cast(const(char)**)alloca((char*).sizeof * (1 + argv.length));
+    auto argv_ = cast(const(char)**)core.stdc.stdlib.malloc((char*).sizeof * (1 + argv.length));
+    scope(exit) core.stdc.stdlib.free(argv_);
 
     toAStringz(argv, argv_);
 
@@ -3430,8 +3434,10 @@ private int execv_(in string pathname, in string[] argv)
 
 private int execve_(in string pathname, in string[] argv, in string[] envp)
 {
-    auto argv_ = cast(const(char)**)alloca((char*).sizeof * (1 + argv.length));
-    auto envp_ = cast(const(char)**)alloca((char*).sizeof * (1 + envp.length));
+    auto argv_ = cast(const(char)**)core.stdc.stdlib.malloc((char*).sizeof * (1 + argv.length));
+    scope(exit) core.stdc.stdlib.free(argv_);
+    auto envp_ = cast(const(char)**)core.stdc.stdlib.malloc((char*).sizeof * (1 + envp.length));
+    scope(exit) core.stdc.stdlib.free(envp_);
 
     toAStringz(argv, argv_);
     toAStringz(envp, envp_);
@@ -3441,7 +3447,8 @@ private int execve_(in string pathname, in string[] argv, in string[] envp)
 
 private int execvp_(in string pathname, in string[] argv)
 {
-    auto argv_ = cast(const(char)**)alloca((char*).sizeof * (1 + argv.length));
+    auto argv_ = cast(const(char)**)core.stdc.stdlib.malloc((char*).sizeof * (1 + argv.length));
+    scope(exit) core.stdc.stdlib.free(argv_);
 
     toAStringz(argv, argv_);
 
@@ -3486,8 +3493,10 @@ version(Posix)
 }
 else version(Windows)
 {
-    auto argv_ = cast(const(char)**)alloca((char*).sizeof * (1 + argv.length));
-    auto envp_ = cast(const(char)**)alloca((char*).sizeof * (1 + envp.length));
+    auto argv_ = cast(const(char)**)core.stdc.stdlib.malloc((char*).sizeof * (1 + argv.length));
+    scope(exit) core.stdc.stdlib.free(argv_);
+    auto envp_ = cast(const(char)**)core.stdc.stdlib.malloc((char*).sizeof * (1 + envp.length));
+    scope(exit) core.stdc.stdlib.free(envp_);
 
     toAStringz(argv, argv_);
     toAStringz(envp, envp_);
@@ -3685,17 +3694,18 @@ else version (OSX)
     {
         const(char)*[5] args;
 
+        auto curl = url.tempCString();
         const(char)* browser = core.stdc.stdlib.getenv("BROWSER");
         if (browser)
         {   browser = strdup(browser);
             args[0] = browser;
-            args[1] = url.tempCString();
+            args[1] = curl;
             args[2] = null;
         }
         else
         {
             args[0] = "open".ptr;
-            args[1] = url.tempCString();
+            args[1] = curl;
             args[2] = null;
         }
 

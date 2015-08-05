@@ -502,15 +502,18 @@ template defaultLogFunction(LogLevel ll)
     }
 }
 
-/** This function logs data to the $(D stdThreadLocalLog).
+/** This function logs data to the $(D stdThreadLocalLog), optionally depending
+on a condition.
 
 In order for the resulting log message to be logged the $(D LogLevel) must
 be greater or equal than the $(D LogLevel) of the $(D stdThreadLocalLog) and
 must be greater or equal than the global $(D LogLevel).
 Additionally the $(D LogLevel) must be greater or equal than the $(D LogLevel)
 of the $(D stdSharedLogger).
+If a condition is given, it must evaluate to $(D true).
 
 Params:
+  condition = The condition must be $(D true) for the data to be logged.
   args = The data that should be logged.
 
 Examples:
@@ -520,24 +523,6 @@ info(1337, "is number");
 error(1337, "is number");
 critical(1337, "is number");
 fatal(1337, "is number");
---------------------
-
-The second version of the function logs data to the $(D stdThreadLocalLog) depending
-on a condition.
-
-In order for the resulting log message to be logged the $(D LogLevel) must
-be greater or equal than the $(D LogLevel) of the $(D stdThreadLocalLog) and
-must be greater or equal than the global $(D LogLevel) additionally the
-condition passed must be $(D true).
-Additionally the $(D LogLevel) must be greater or equal than the $(D LogLevel)
-of the $(D stdSharedLogger).
-
-Params:
-  condition = The condition must be $(D true) for the data to be logged.
-  args = The data that should be logged.
-
-Examples:
---------------------
 trace(true, 1337, "is number");
 info(false, 1337, "is number");
 error(true, 1337, "is number");
@@ -1814,23 +1799,9 @@ unittest
 {
     Logger l = stdThreadLocalLog;
     stdThreadLocalLog = new FileLogger("someFile.log");
+    scope(exit) remove("someFile.log");
 
     stdThreadLocalLog = l;
-}
-
-version (unittest)
-{
-    import std.array;
-    import std.ascii;
-    import std.random;
-
-    @trusted package string randomString(size_t upto)
-    {
-        auto app = Appender!string();
-        foreach (_ ; 0 .. upto)
-            app.put(letters[uniform(0, letters.length)]);
-        return app.data;
-    }
 }
 
 @safe unittest
@@ -1841,38 +1812,35 @@ version (unittest)
     globalLogLevel = ll;
 }
 
-version (unittest)
+package class TestLogger : Logger
 {
-    package class TestLogger : Logger
+    int line = -1;
+    string file = null;
+    string func = null;
+    string prettyFunc = null;
+    string msg = null;
+    LogLevel lvl;
+
+    this(const LogLevel lv = LogLevel.all) @safe
     {
-        int line = -1;
-        string file = null;
-        string func = null;
-        string prettyFunc = null;
-        string msg = null;
-        LogLevel lvl;
-
-        this(const LogLevel lv = LogLevel.all) @safe
-        {
-            super(lv);
-        }
-
-        override protected void writeLogMsg(ref LogEntry payload) @safe
-        {
-            this.line = payload.line;
-            this.file = payload.file;
-            this.func = payload.funcName;
-            this.prettyFunc = payload.prettyFuncName;
-            this.lvl = payload.logLevel;
-            this.msg = payload.msg;
-        }
+        super(lv);
     }
 
-    private void testFuncNames(Logger logger) @safe
+    override protected void writeLogMsg(ref LogEntry payload) @safe
     {
-        string s = "I'm here";
-        logger.log(s);
+        this.line = payload.line;
+        this.file = payload.file;
+        this.func = payload.funcName;
+        this.prettyFunc = payload.prettyFuncName;
+        this.lvl = payload.logLevel;
+        this.msg = payload.msg;
     }
+}
+
+version(unittest) private void testFuncNames(Logger logger) @safe
+{
+    string s = "I'm here";
+    logger.log(s);
 }
 
 @safe unittest
@@ -2104,8 +2072,9 @@ version (unittest)
 
 unittest // default logger
 {
-    import std.file : remove;
-    string filename = randomString(32) ~ ".tempLogFile";
+    import std.file : exists, remove;
+
+    string filename = __FUNCTION__ ~ ".tempLogFile";
     FileLogger l = new FileLogger(filename);
     auto oldunspecificLogger = sharedLog;
     sharedLog = l;
@@ -2113,6 +2082,7 @@ unittest // default logger
     scope(exit)
     {
         remove(filename);
+        assert(!exists(filename));
         sharedLog = oldunspecificLogger;
         globalLogLevel = LogLevel.all;
     }
@@ -2142,7 +2112,7 @@ unittest
 {
     import std.file : remove;
     import core.memory : destroy;
-    string filename = randomString(32) ~ ".tempLogFile";
+    string filename = __FUNCTION__ ~ ".tempLogFile";
     auto oldunspecificLogger = sharedLog;
 
     scope(exit)

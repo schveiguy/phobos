@@ -28,46 +28,7 @@
 
 QUIET:=@
 
-OS:=
-uname_S:=$(shell uname -s)
-ifeq (Darwin,$(uname_S))
-    OS:=osx
-endif
-ifeq (Linux,$(uname_S))
-    OS:=linux
-endif
-ifeq (FreeBSD,$(uname_S))
-    OS:=freebsd
-endif
-ifeq (OpenBSD,$(uname_S))
-    OS:=openbsd
-endif
-ifeq (Solaris,$(uname_S))
-    OS:=solaris
-endif
-ifeq (SunOS,$(uname_S))
-    OS:=solaris
-endif
-ifeq (,$(OS))
-    $(error Unrecognized or unsupported OS for uname: $(uname_S))
-endif
-
-ifeq (,$(MODEL))
-    ifeq ($(OS),solaris)
-        uname_M:=$(shell isainfo -n)
-    else
-        uname_M:=$(shell uname -m)
-    endif
-    ifneq (,$(findstring $(uname_M),x86_64 amd64))
-        MODEL:=64
-    endif
-    ifneq (,$(findstring $(uname_M),i386 i586 i686))
-        MODEL:=32
-    endif
-    ifeq (,$(MODEL))
-        $(error Cannot figure 32/64 model from uname -m: $(uname_M))
-    endif
-endif
+include osmodel.mak
 
 # Default to a release built, override with BUILD=debug
 ifeq (,$(BUILD))
@@ -101,7 +62,7 @@ SRC_DOCUMENTABLES = index.d $(addsuffix .d,$(STD_MODULES) \
 STDDOC = $(DOCSRC)/html.ddoc $(DOCSRC)/dlang.org.ddoc $(DOCSRC)/std_navbar-prerelease.ddoc $(DOCSRC)/std.ddoc $(DOCSRC)/macros.ddoc $(DOCSRC)/.generated/modlist-prerelease.ddoc
 BIGSTDDOC = $(DOCSRC)/std_consolidated.ddoc $(DOCSRC)/macros.ddoc
 # Set DDOC, the documentation generator
-DDOC=$(DMD) -conf= -m$(MODEL) -w -c -o- -version=StdDdoc \
+DDOC=$(DMD) -conf= $(MODEL_FLAG) -w -c -o- -version=StdDdoc \
 	-I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS)
 
 # Set DRUNTIME name and full path
@@ -109,8 +70,8 @@ ifneq (,$(DRUNTIME))
 	CUSTOM_DRUNTIME=1
 endif
 ifeq (,$(findstring win,$(OS)))
-	DRUNTIME = $(DRUNTIME_PATH)/lib/libdruntime-$(OS)$(MODEL).a
-	DRUNTIMESO = $(basename $(DRUNTIME))so.a
+	DRUNTIME = $(DRUNTIME_PATH)/generated/$(OS)/$(BUILD)/$(MODEL)/libdruntime.a
+	DRUNTIMESO = $(basename $(DRUNTIME)).so.a
 else
 	DRUNTIME = $(DRUNTIME_PATH)/lib/druntime.lib
 endif
@@ -133,7 +94,7 @@ endif
 # Set CFLAGS
 CFLAGS=
 ifneq (,$(filter cc% gcc% clang% icc% egcc%, $(CC)))
-	CFLAGS += -m$(MODEL) -fPIC
+	CFLAGS += $(MODEL_FLAG) -fPIC -DHAVE_UNISTD_H
 	ifeq ($(BUILD),debug)
 		CFLAGS += -g
 	else
@@ -142,7 +103,7 @@ ifneq (,$(filter cc% gcc% clang% icc% egcc%, $(CC)))
 endif
 
 # Set DFLAGS
-DFLAGS=-conf= -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS) -w -dip25 -m$(MODEL) $(PIC)
+DFLAGS=-conf= -I$(DRUNTIME_PATH)/import $(DMDEXTRAFLAGS) -w -dip25 $(MODEL_FLAG) $(PIC)
 ifeq ($(BUILD),debug)
 	DFLAGS += -g -debug
 else
@@ -194,16 +155,15 @@ STD_PACKAGES = $(addprefix std/, algorithm container experimental/logger \
 
 # Modules in std (including those in packages), in alphabetical order.
 STD_MODULES = $(addprefix std/, \
-  array ascii base64 bigint bitmanip compiler complex concurrency \
+  array ascii base64 bigint bitmanip compiler complex concurrency concurrencybase \
   $(addprefix container/, array binaryheap dlist rbtree slist util) \
   conv cstream csv datetime demangle \
-  $(addprefix digest/, digest crc md ripemd sha) \
+  $(addprefix digest/, digest crc hmac md ripemd sha) \
   encoding exception \
   $(addprefix experimental/logger/, core filelogger nulllogger multilogger) \
-  file format functional getopt \
-  $(addprefix io/, buffer text stream traits) \
-  json math mathspecial metastrings mmfile net/isemail net/curl numeric \
-  outbuffer parallelism path process random \
+  file format functional getopt json math mathspecial \
+  meta metastrings mmfile net/isemail net/curl numeric outbuffer parallelism path \
+  process random \
   $(addprefix range/, primitives interfaces) \
   $(addprefix regex/, $(addprefix internal/,generator ir parser backtracking \
   	kickstart tests thompson)) \
@@ -218,17 +178,19 @@ EXTRA_MODULES_OSX := $(addprefix std/c/osx/, socket)
 EXTRA_MODULES_FREEBSD := $(addprefix std/c/freebsd/, socket)
 EXTRA_MODULES_WIN32 := $(addprefix std/c/windows/, com stat windows		\
 		winsock) $(addprefix std/windows/, charset iunknown syserror)
-ifeq (,$(findstring win,$(OS)))
-	EXTRA_DOCUMENTABLES:=$(EXTRA_MODULES_LINUX)
-else
-	EXTRA_DOCUMENTABLES:=$(EXTRA_MODULES_WIN32)
-endif
 
 # Other D modules that aren't under std/
-EXTRA_DOCUMENTABLES += $(addprefix etc/c/,curl sqlite3 zlib) $(addprefix	\
-std/c/, fenv locale math process stdarg stddef stdio stdlib string	\
-time wcharh)
-EXTRA_MODULES += $(EXTRA_DOCUMENTABLES) $(addprefix			\
+EXTRA_MODULES_COMMON := $(addprefix etc/c/,curl odbc/sql odbc/sqlext \
+  odbc/sqltypes odbc/sqlucode sqlite3 zlib) $(addprefix std/c/,fenv locale \
+  math process stdarg stddef stdio stdlib string time wcharh)
+
+ifeq (,$(findstring win,$(OS)))
+	EXTRA_DOCUMENTABLES := $(EXTRA_MODULES_LINUX) $(EXTRA_MODULES_COMMON)
+else
+	EXTRA_DOCUMENTABLES := $(EXTRA_MODULES_WIN32) $(EXTRA_MODULES_COMMON)
+endif
+
+EXTRA_MODULES_INTERNAL := $(addprefix			\
 	std/internal/digest/, sha_SSSE3 ) $(addprefix \
 	std/internal/math/, biguintcore biguintnoasm biguintx86	\
 	gammafunction errorfunction) $(addprefix std/internal/, \
@@ -237,6 +199,8 @@ EXTRA_MODULES += $(EXTRA_DOCUMENTABLES) $(addprefix			\
 	$(addprefix std/internal/test/, dummyrange) \
 	$(addprefix std/algorithm/, internal)
 
+EXTRA_MODULES += $(EXTRA_DOCUMENTABLES) $(EXTRA_MODULES_INTERNAL)
+
 # Aggregate all D modules relevant to this build
 D_MODULES = $(STD_MODULES) $(EXTRA_MODULES) \
   $(addsuffix /package,$(STD_PACKAGES))
@@ -244,9 +208,10 @@ D_MODULES = $(STD_MODULES) $(EXTRA_MODULES) \
 # Add the .d suffix to the module names
 D_FILES = $(addsuffix .d,$(D_MODULES))
 # Aggregate all D modules over all OSs (this is for the zip file)
-ALL_D_FILES = $(addsuffix .d, $(D_MODULES) \
+ALL_D_FILES = $(addsuffix .d, $(STD_MODULES) $(EXTRA_MODULES_COMMON) \
   $(EXTRA_MODULES_LINUX) $(EXTRA_MODULES_OSX) $(EXTRA_MODULES_FREEBSD) \
-  $(EXTRA_MODULES_WIN32)) std/internal/windows/advapi32.d \
+  $(EXTRA_MODULES_WIN32) $(EXTRA_MODULES_INTERNAL)) \
+  std/internal/windows/advapi32.d \
   std/windows/registry.d std/c/linux/pthread.d std/c/linux/termios.d \
   std/c/linux/tipc.d
 
@@ -381,9 +346,18 @@ moduleName=$(subst /,.,$(1))
 unittest/%.run : $(ROOT)/unittest/test_runner
 	$(QUIET)$(RUN) $< $(call moduleName,$*)
 
-# target for quickly running a single unittest (using static phobos library)
+# Target for quickly running a single unittest (using static phobos library).
+# For example: "make std/algorithm/mutation.test"
+# The mktemp business is needed so .o files don't clash in concurrent unittesting.
 %.test : %.d $(LIB)
-	$(DMD) $(DFLAGS) -main -unittest $(LIB) -defaultlib= -debuglib= -L-lcurl -run $<
+	T=`mktemp -d /tmp/.dmd-run-test.XXXXXX` && \
+	  $(DMD) -od$$T $(DFLAGS) -main -unittest $(LIB) -defaultlib= -debuglib= -L-lcurl -cov -run $< && \
+	  rm -rf $$T
+
+# Target for quickly unittesting all modules and packages within a package,
+# transitively. For example: "make std/algorithm.test"
+%.test : $(LIB)
+	$(MAKE) -f $(MAKEFILE) $(addsuffix .test,$(patsubst %.d,%,$(wildcard $*/*)))
 
 ################################################################################
 # More stuff
@@ -400,7 +374,7 @@ clean :
 	rm -rf $(ROOT_OF_THEM_ALL) $(ZIPFILE) $(DOC_OUTPUT_DIR)
 
 zip :
-	zip $(ZIPFILE) $(MAKEFILE) $(ALL_D_FILES) $(ALL_C_FILES) index.d win32.mak win64.mak
+	zip $(ZIPFILE) $(MAKEFILE) $(ALL_D_FILES) $(ALL_C_FILES) index.d win32.mak win64.mak osmodel.mak
 
 install2 : all
 	$(eval lib_dir=$(if $(filter $(OS),osx), lib, lib$(MODEL)))
@@ -423,7 +397,7 @@ else
 # to always invoke druntime's make. Use FORCE instead of .PHONY to
 # avoid rebuilding phobos when $(DRUNTIME) didn't change.
 $(DRUNTIME): FORCE
-	$(MAKE) -C $(DRUNTIME_PATH) -f posix.mak MODEL=$(MODEL) DMD=$(DMD) OS=$(OS)
+	$(MAKE) -C $(DRUNTIME_PATH) -f posix.mak MODEL=$(MODEL) DMD=$(DMD) OS=$(OS) BUILD=$(BUILD)
 
 ifeq (,$(findstring win,$(OS)))
 $(DRUNTIMESO): $(DRUNTIME)
@@ -474,8 +448,24 @@ rsync-prerelease : html
 html_consolidated :
 	$(DDOC) -Df$(DOCSRC)/std_consolidated_header.html $(DOCSRC)/std_consolidated_header.dd
 	$(DDOC) -Df$(DOCSRC)/std_consolidated_footer.html $(DOCSRC)/std_consolidated_footer.dd
-	$(MAKE) DOC_OUTPUT_DIR=$(BIGDOC_OUTPUT_DIR) STDDOC=$(BIGSTDDOC) html -j 8
+	$(MAKE) -f $(MAKEFILE) DOC_OUTPUT_DIR=$(BIGDOC_OUTPUT_DIR) STDDOC=$(BIGSTDDOC) html -j 8
 	cat $(DOCSRC)/std_consolidated_header.html $(BIGHTMLS)	\
 	$(DOCSRC)/std_consolidated_footer.html > $(DOC_OUTPUT_DIR)/std_consolidated.html
 
+#################### test for undesired white spaces ##########################
+CWS_TOCHECK = posix.mak win32.mak win64.mak osmodel.mak
+CWS_TOCHECK += $(ALL_D_FILES) index.d
+CWS_TOCHECK += $(filter-out etc/c/zlib/ChangeLog,$(ALL_C_FILES))
+
+checkwhitespace: $(LIB)
+	$(DMD) $(DFLAGS) -defaultlib= -debuglib= $(LIB) -run ../dmd/src/checkwhitespace.d $(CWS_TOCHECK)
+
 #############################
+
+.PHONY : auto-tester-build
+auto-tester-build: all checkwhitespace
+
+.PHONY : auto-tester-test
+auto-tester-test: unittest
+
+.DELETE_ON_ERROR: # GNU Make directive (delete output files on error)

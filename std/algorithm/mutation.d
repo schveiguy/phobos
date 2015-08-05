@@ -295,23 +295,51 @@ See_Also:
     $(WEB sgi.com/tech/stl/_copy.html, STL's _copy)
  */
 TargetRange copy(SourceRange, TargetRange)(SourceRange source, TargetRange target)
-if (isInputRange!SourceRange && isOutputRange!(TargetRange, ElementType!SourceRange))
 {
-    static TargetRange genericImpl(SourceRange source, TargetRange target)
+    import std.traits : isArray, Unqual;
+    static if (isArray!SourceRange && isArray!TargetRange &&
+               is(Unqual!(typeof(source[0])) == Unqual!(typeof(target[0]))))
+    {
+        const tlen = target.length;
+        const slen = source.length;
+        assert(tlen >= slen,
+                "Cannot copy a source range into a smaller target range.");
+
+        immutable overlaps = () @trusted {
+            return source.ptr < target.ptr + tlen &&
+                   target.ptr < source.ptr + slen; }();
+
+        if (overlaps)
+        {
+            foreach (idx; 0 .. slen)
+                target[idx] = source[idx];
+            return target[slen .. tlen];
+        }
+        else
+        {
+            // Array specialization.  This uses optimized memory copying
+            // routines under the hood and is about 10-20x faster than the
+            // generic implementation.
+            target[0 .. slen] = source[];
+            return target[slen .. $];
+        }
+    }
+    else static if (isInputRange!SourceRange &&
+                    isOutputRange!(TargetRange, ElementType!SourceRange))
     {
         // Specialize for 2 random access ranges.
         // Typically 2 random access ranges are faster iterated by common
-        // index then by x.popFront(), y.popFront() pair
-        static if (isRandomAccessRange!SourceRange && hasLength!SourceRange
-            && hasSlicing!TargetRange && isRandomAccessRange!TargetRange && hasLength!TargetRange)
+        // index than by x.popFront(), y.popFront() pair
+        static if (isRandomAccessRange!SourceRange &&
+                   hasLength!SourceRange &&
+                   hasSlicing!TargetRange &&
+                   isRandomAccessRange!TargetRange &&
+                   hasLength!TargetRange)
         {
-            assert(target.length >= source.length,
-                "Cannot copy a source range into a smaller target range.");
-
             auto len = source.length;
             foreach (idx; 0 .. len)
                 target[idx] = source[idx];
-            return target[len .. target.length];
+            return target[len .. $];
         }
         else
         {
@@ -319,34 +347,10 @@ if (isInputRange!SourceRange && isOutputRange!(TargetRange, ElementType!SourceRa
             return target;
         }
     }
-
-    import std.traits : isArray;
-    static if (isArray!SourceRange && isArray!TargetRange &&
-               is(Unqual!(typeof(source[0])) == Unqual!(typeof(target[0]))))
-    {
-        immutable overlaps = () @trusted {
-            return source.ptr < target.ptr + target.length &&
-                   target.ptr < source.ptr + source.length; }();
-
-        if (overlaps)
-        {
-            return genericImpl(source, target);
-        }
-        else
-        {
-            // Array specialization.  This uses optimized memory copying
-            // routines under the hood and is about 10-20x faster than the
-            // generic implementation.
-            assert(target.length >= source.length,
-                "Cannot copy a source array into a smaller target array.");
-            target[0 .. source.length] = source[];
-
-            return target[source.length .. $];
-        }
-    }
     else
     {
-        return genericImpl(source, target);
+        static assert(false, "Cannot copy " ~ SourceRange.stringof ~
+                             " into " ~ TargetRange.stringof);
     }
 }
 
@@ -445,12 +449,28 @@ $(WEB sgi.com/tech/stl/copy_backward.html, STL's copy_backward'):
     }
 }
 
+@safe unittest
+{
+    // Issue 13650
+    import std.typecons : TypeTuple;
+    foreach (Char; TypeTuple!(char, wchar, dchar))
+    {
+        Char[3] a1 = "123";
+        Char[6] a2 = "456789";
+        assert(copy(a1[], a2[]) is a2[3..$]);
+        assert(a1[] == "123");
+        assert(a2[] == "123789");
+    }
+}
+
 /**
-Assigns $(D value) to each element of input range $(D range).
+Assigns $(D value) to each element of input _range $(D range).
 
 Params:
-        range = An $(XREF2 range, isInputRange, input range) that exposes references to its elements
-                and has assignable elements
+        range = An
+                $(XREF_PACK_NAMED _range,primitives,isInputRange,input _range)
+                that exposes references to its elements and has assignable
+                elements
         value = Assigned to each element of range
 
 See_Also:
@@ -560,10 +580,11 @@ $(D range) does not have to be a multiple of the length of $(D
 filler). If $(D filler) is empty, an exception is thrown.
 
 Params:
-    range = An $(XREF2 range, isInputRange, input range) that exposes
-            references to its elements and has assignable elements.
-    filler = The $(XREF2 range, isForwardRange, forward range) representing the
-             _fill pattern.
+    range = An $(XREF_PACK_NAMED _range,primitives,isInputRange,input _range)
+            that exposes references to its elements and has assignable elements.
+    filler = The
+             $(XREF_PACK_NAMED _range,primitives,isForwardRange,forward _range)
+             representing the _fill pattern.
  */
 void fill(Range1, Range2)(Range1 range, Range2 filler)
     if (isInputRange!Range1
@@ -680,8 +701,10 @@ Initializes all elements of $(D range) with their $(D .init) value.
 Assumes that the elements of the range are uninitialized.
 
 Params:
-        range = An $(XREF2 range, isInputRange, input range) that exposes references to its elements
-                and has assignable elements
+        range = An
+                $(XREF_PACK_NAMED _range,primitives,isInputRange,input _range)
+                that exposes references to its elements and has assignable
+                elements
 
 See_Also:
         $(LREF fill)
@@ -1168,9 +1191,10 @@ An exception will be thrown if this condition does not hold, i.e., there is not
 enough room in $(D tgt) to accommodate all of $(D src).
 
 Params:
-    src = An $(XREF2 range, isInputRange, input range) with movable elements.
-    tgt = An $(XREF2 range, isInputRange, input range) with elements that
-        elements from $(D src) can be moved into.
+    src = An $(XREF_PACK_NAMED range,primitives,isInputRange,input range) with
+        movable elements.
+    tgt = An $(XREF_PACK_NAMED range,primitives,isInputRange,input range) with
+        elements that elements from $(D src) can be moved into.
 
 Returns: The leftover portion of $(D tgt) after all elements from $(D src) have
 been moved.
@@ -1218,9 +1242,10 @@ tgt) in lockstep in increasing order, calls $(D move(a, b)). Stops
 when either $(D src) or $(D tgt) have been exhausted.
 
 Params:
-    src = An $(XREF2 range, isInputRange, input range) with movable elements.
-    tgt = An $(XREF2 range, isInputRange, input range) with elements that
-        elements from $(D src) can be moved into.
+    src = An $(XREF_PACK_NAMED range,primitives,isInputRange,input range) with
+        movable elements.
+    tgt = An $(XREF_PACK_NAMED range,primitives,isInputRange,input range) with
+        elements that elements from $(D src) can be moved into.
 
 Returns: The leftover portions of the two ranges after one or the other of the
 ranges have been exhausted.
@@ -1314,8 +1339,8 @@ In the case above the element at offset $(D 1) is removed and $(D
 remove) returns the range smaller by one element. The original array
 has remained of the same length because all functions in $(D
 std.algorithm) only change $(I content), not $(I topology). The value
-$(D 8) is repeated because $(XREF algorithm, move) was invoked to move
-elements around and on integers $(D move) simply copies the source to
+$(D 8) is repeated because $(LREF move) was invoked to
+move elements around and on integers $(D move) simply copies the source to
 the destination. To replace $(D a) with the effect of the removal,
 simply assign $(D a = remove(a, 1)). The slice will be rebound to the
 shorter array and the operation completes with maximal efficiency.
@@ -2217,8 +2242,10 @@ define copy constructors (for all other types, $(LREF fill) and
 uninitializedFill are equivalent).
 
 Params:
-        range = An $(XREF2 range, isInputRange, input range) that exposes references to its elements
-                and has assignable elements
+        range = An
+                $(XREF_PACK_NAMED _range,primitives,isInputRange,input _range)
+                that exposes references to its elements and has assignable
+                elements
         value = Assigned to each element of range
 
 See_Also:

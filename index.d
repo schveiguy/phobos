@@ -81,6 +81,7 @@ $(BOOKTABLE ,
         $(TD
             $(LINK2 std_digest_crc.html, std.digest.crc)$(BR)
             $(LINK2 std_digest_digest.html, std.digest.digest)$(BR)
+            $(LINK2 std_digest_hmac.html, std.digest.hmac)$(BR)
             $(LINK2 std_digest_md.html, std.digest.md)$(BR)
             $(LINK2 std_digest_ripemd.html, std.digest.ripemd)$(BR)
             $(LINK2 std_digest_sha.html, std.digest.sha)$(BR)
@@ -201,7 +202,6 @@ $(BOOKTABLE ,
     $(TR
         $(TD
             $(LINK2 std_socket.html, std.socket)$(BR)
-            $(LINK2 std_socketstream.html, std.socketstream)$(BR)
             $(LINK2 std_net_curl.html, std.net.curl)$(BR)
             $(LINK2 std_net_isemail.html, std.net.isemail)
         )
