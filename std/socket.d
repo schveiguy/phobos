@@ -1061,6 +1061,12 @@ unittest
             assert(results.length && results[0].family == AddressFamily.INET6);
         }
     });
+
+    if (getaddrinfoPointer)
+    {
+        auto results = getAddressInfo(null, "1234", AddressInfoFlags.PASSIVE, SocketType.STREAM, ProtocolType.TCP, AddressFamily.INET);
+        assert(results.length == 1 && results[0].address.toString() == "0.0.0.0:1234");
+    }
 }
 
 
@@ -3425,16 +3431,6 @@ public:
             throw new SocketOSException("Socket select error");
 
         return result;
-    }
-
-    // Explicitly undocumented. It will be removed in December 2014.
-    deprecated("Please use the overload of select which takes a Duration instead.")
-    static int select(SocketSet checkRead, SocketSet checkWrite, SocketSet checkError, long microseconds) @trusted
-    {
-        TimeVal tv;
-        tv.seconds      = to!(tv.tv_sec_t )(microseconds / 1_000_000);
-        tv.microseconds = to!(tv.tv_usec_t)(microseconds % 1_000_000);
-        return select(checkRead, checkWrite, checkError, &tv);
     }
 
 

@@ -328,7 +328,9 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\std_digest_sha.html \
 	$(DOC)\std_digest_md.html \
 	$(DOC)\std_digest_ripemd.html \
+	$(DOC)\std_digest_hmac.html \
 	$(DOC)\std_digest_digest.html \
+	$(DOC)\std_digest_hmac.html \
 	$(DOC)\std_cstream.html \
 	$(DOC)\std_csv.html \
 	$(DOC)\std_datetime.html \
@@ -489,6 +491,7 @@ cov : $(SRC_TO_COMPILE) $(LIB)
 	$(DMD) -conf= -cov=100 -unittest -main -run std\digest\md.d
 	$(DMD) -conf= -cov=100 -unittest -main -run std\digest\ripemd.d
 	$(DMD) -conf= -cov=75 -unittest -main -run std\digest\digest.d
+	$(DMD) -conf= -cov=100 -unittest -main -run std\digest\hmac.d
 	$(DMD) -conf= -cov=95 -unittest -main -run std\algorithm\package.d
 	$(DMD) -conf= -cov=95 -unittest -main -run std\algorithm\comparison.d
 	$(DMD) -conf= -cov=95 -unittest -main -run std\algorithm\iteration.d
@@ -530,6 +533,9 @@ cov : $(SRC_TO_COMPILE) $(LIB)
 	$(DMD) -conf= -cov=58 -unittest -main -run etc\c\zlib.d
 
 html : $(DOCS)
+
+changelog.html: changelog.dd
+	$(DMD) -Dfchangelog.html changelog.dd
 
 ######################################################
 
@@ -835,6 +841,9 @@ $(DOC)\std_digest_ripemd.html : $(STDDOC) std\digest\ripemd.d
 
 $(DOC)\std_digest_digest.html : $(STDDOC) std\digest\digest.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_digest_digest.html $(STDDOC) std\digest\digest.d
+
+$(DOC)\std_digest_hmac.html : $(STDDOC) std\digest\hmac.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_digest_hmac.html $(STDDOC) std\digest\hmac.d
 
 $(DOC)\std_windows_charset.html : $(STDDOC) std\windows\charset.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_windows_charset.html $(STDDOC) std\windows\charset.d

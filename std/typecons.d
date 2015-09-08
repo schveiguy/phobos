@@ -394,9 +394,8 @@ template Tuple(Specs...)
     }
 
     enum areCompatibleTuples(Tup1, Tup2, string op) = isTuple!Tup2 && is(typeof(
+    (ref Tup1 tup1, ref Tup2 tup2)
     {
-        Tup1 tup1 = void;
-        Tup2 tup2 = void;
         static assert(tup1.field.length == tup2.field.length);
         foreach (i, _; Tup1.Types)
         {
@@ -1148,6 +1147,24 @@ unittest
         static assert( is(typeof(tc4 < tm4)));
         static assert( is(typeof(tc4 < tc4)));
     }
+    // Bugzilla 14890
+    static void test14890(inout int[] dummy)
+    {
+        alias V = Tuple!(int, int);
+
+                    V mv;
+              const V cv;
+          immutable V iv;
+              inout V wv;   // OK <- NG
+        inout const V wcv;  // OK <- NG
+
+        foreach (v1; TypeTuple!(mv, cv, iv, wv, wcv))
+        foreach (v2; TypeTuple!(mv, cv, iv, wv, wcv))
+        {
+            static assert(__traits(compiles, v1 < v2),
+                          typeof(v1).stringof ~ " < " ~ typeof(v2).stringof);
+        }
+    }
     {
         int[2] ints = [ 1, 2 ];
         Tuple!(int, int) t = ints;
@@ -1797,6 +1814,19 @@ Params:
                 sink.formatValue(_value, fmt);
             }
         }
+
+        // Issue 14940
+        void toString()(scope void delegate(const(char)[]) @safe sink, FormatSpec!char fmt)
+        {
+            if (isNull)
+            {
+                sink.formatValue("Nullable.null", fmt);
+            }
+            else
+            {
+                sink.formatValue(_value, fmt);
+            }
+        }
     }
 
 /**
@@ -1818,6 +1848,18 @@ unittest
 
     ni = 0;
     assert(!ni.isNull);
+}
+
+// Issue 14940
+@safe unittest
+{
+    import std.array : appender;
+    import std.format : formattedWrite;
+
+    auto app = appender!string();
+    Nullable!int a = 1;
+    formattedWrite(app, "%s", a);
+    assert(app.data == "1");
 }
 
 /**

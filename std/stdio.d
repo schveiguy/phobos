@@ -311,18 +311,10 @@ manner, such that as soon as the last $(D File) variable bound to a
 given $(D FILE*) goes out of scope, the underlying $(D FILE*) is
 automatically closed.
 
-Bugs:
-$(D File) expects file names to be encoded in $(B CP_ACP) on $(I Windows)
-instead of UTF-8 ($(BUGZILLA 7648)) thus must not be used in $(I Windows)
-or cross-platform applications other than with an immediate ASCII string as
-a file name to prevent accidental changes to result in incorrect behavior.
-One can use $(XREF file, read)/$(XREF file, write)/$(XREF stream, _File)
-instead.
-
 Example:
 ----
 // test.d
-void main(string args[])
+void main(string[] args)
 {
     auto f = File("test.txt", "w"); // open for writing
     f.write("Hello");
@@ -2447,7 +2439,7 @@ $(D Range) that locks the file and allows fast writing to it.
             import core.stdc.wchar_ : fwide;
             import std.exception : enforce;
 
-            enforce(f._p && f._p.handle);
+            enforce(f._p && f._p.handle, "Attempting to write to closed File");
             fps_ = f._p.handle;
             orientation_ = fwide(fps_, 0);
             FLOCK(fps_);
@@ -2795,6 +2787,13 @@ unittest
         writer.put(repeat('#', 12)); // BUG 11945
     }
     assert(File(deleteme).readln() == "日本語日本語日本語日本語############");
+}
+
+@safe unittest
+{
+    import std.exception: collectException;
+    auto e = collectException({ File f; f.writeln("Hello!"); }());
+    assert(e && e.msg == "Attempting to write to closed File");
 }
 
 /// Used to specify the lock type for $(D File.lock) and $(D File.tryLock).
@@ -4557,16 +4556,12 @@ version(linux)
     }
 }
 
-version(unittest) string testFilename(string file = __FILE__, size_t line = __LINE__) @safe pure
+version(unittest) string testFilename(string file = __FILE__, size_t line = __LINE__) @safe
 {
     import std.conv : text;
+    import std.file : deleteme;
     import std.path : baseName;
 
-    // Non-ASCII characters can't be used because of snn.lib @@@BUG8643@@@
-    version(DIGITAL_MARS_STDIO)
-        return text("deleteme-.", baseName(file), ".", line);
-    else
-
-        // filename intentionally contains non-ASCII (Russian) characters
-        return text("deleteme-детка.", baseName(file), ".", line);
+    // filename intentionally contains non-ASCII (Russian) characters for test Issue 7648
+    return text("deleteme-детка.", baseName(file), ".", line);
 }
