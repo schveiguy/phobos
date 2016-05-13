@@ -3,7 +3,7 @@ module std.io.buffer;
 /**
  * Array-based buffer
  */
-struct ArrayBuffer
+struct ArrayBuffer(T)
 {
     static typeof(this) createDefault() {
         return typeof(this)(512, 8 * 1024);
@@ -20,89 +20,67 @@ struct ArrayBuffer
         auto pageBits = bsr(chunk)+1;
         pageMask = (1<<pageBits)-1;
         //TODO: revisit with std.allocator
-        buffer = new ubyte[initial<<pageBits];
-        start = end = 0;
+        buffer = new T[initial<<pageBits];
     }
 
     // get the valid data in the buffer
     @property auto window(){
-        return buffer[start..end];
+        return buffer;
     }
 
-    void discard(size_t toDiscard)
+    /**
+     * toDiscard - number of bytes at the beginning of the buffer that aren't valid
+     * valid - number of elements that are valid in the buffer (starting at 0)
+     * buffer[toDiscard..valid] are valid data bytes
+     * minBytes - minimum number of *extra* bytes requested besides the valid data that should be made available.
+     */
+    size_t extendAndFlush(size_t toDiscard, size_t valid, size_t minBytes)
     {
-        if(toDiscard > end-start)
-            reset();
+        import std.array : uninitializedArray;
+        import std.algorithm.mutation : copy;
+        import std.algorithm.comparison : max;
+        size_t start = void;
+        size_t end = void;
+        if(toDiscard >= valid)
+        {
+            start = end = valid = 0;
+        }
         else
-            start += toDiscard;
-    }
-
-    // extends the buffer n bytes, returns the number of bytes that could be extended without reallocating.
-    // This includes if the data has to be moved.
-    //
-    // Use 0 as parameter if you only want to determine how much you can request without allocating.
-    // A negative value will shrink the "allocated" space down that much.
-    size_t extend(ptrdiff_t n)
-    {
-        import std.algorithm;
-        if(n > 0)
         {
-            //TODO: tweak condition w.r.t. cost-benefit of compaction vs realloc
-            //More TODO: if we are going to extend anyway, and that extend
-            //will reallocate, we are copying data *twice*. Avoid that.
-            //
-            // currently, the code always compacts, even if it's inefficient. But only if n is non-zero
-            if (start > 0) {
-                // n + pageMask -> at least 1 page, no less then n
-                copy(buffer[start .. end], buffer[0 .. end - start]);
-                end -= start;
-                start = 0;
-            }
+            start = toDiscard;
+            end = valid;
+            valid -= toDiscard;
         }
-        else if(cast(ptrdiff_t)start > cast(ptrdiff_t)end + n)
+        // check number of bytes we can extend without reallocating
+        if(buffer.length - valid >= minBytes)
         {
-            // erasing all data.
-            reset();
-            return buffer.length;
+            // can just move data
+            if(valid > 0)
+                copy(buffer[start..end], buffer[0..valid]);
         }
-        
-        if(end + n > buffer.length)
+        else
         {
-            // need to extend more data
-            // rounded up to 2^^chunkBits
-            //TODO: tweak grow rate formula
             auto oldLen = buffer.length;
-            auto newLen = max(end + n, oldLen * 14 / 10);
+            auto newLen = max(valid + minBytes, oldLen * 14 / 10);
             newLen = (newLen + pageMask) & ~pageMask; //round up to page
-            buffer.length = newLen;
+            auto newbuf = uninitializedArray!(T[])(newLen);
+            if (valid > 0) {
+                // n + pageMask -> at least 1 page, no less then n
+                copy(buffer[start .. end], newbuf[0 .. valid]);
+            }
+            buffer = newbuf;
         }
         
-        end += n;
-
-        return buffer.length - (end - start);
-    }
-
-    size_t capacity() const
-    {
-        return buffer.length;
-    }
-
-    void reset()
-    {
-        // reset all buffer data.
-        start = end = 0;
+        return buffer.length - valid;
     }
 
 private:
-    ubyte[] buffer;
-    size_t start; // start of data in buffer
-    size_t end; // end of data in buffer
+    T[] buffer;
     size_t pageMask; //bit mask - used for fast rounding to multiple of page
 }
 
 unittest {
     import std.io.traits;
-    static assert(isBuffer!(ArrayBuffer));
 // TODO fill this out
 }
 
