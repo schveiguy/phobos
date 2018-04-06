@@ -163,8 +163,10 @@ import std.traits;
 
 version(unittest)
 {
-    static import std.meta;
-    package alias PseudoRngTypes = std.meta.AliasSeq!(MinstdRand0, MinstdRand, Mt19937, Xorshift32, Xorshift64,
+    // don't import AliasSeq here, as we don't want to import extra things
+    // inside version(unittest).
+    package alias _Items(V...) = V;
+    package alias PseudoRngTypes = _Items!(MinstdRand0, MinstdRand, Mt19937, Xorshift32, Xorshift64,
                                                       Xorshift96, Xorshift128, Xorshift160, Xorshift192);
 }
 
@@ -691,7 +693,7 @@ alias MinstdRand = LinearCongruentialEngine!(uint, 48_271, 0, 2_147_483_647);
     assert(rnd.front == 399268537);
 
     // Check .save works
-    static foreach (Type; std.meta.AliasSeq!(MinstdRand0, MinstdRand))
+    static foreach (Type; _Items!(MinstdRand0, MinstdRand))
     {{
         auto rnd1 = Type(123_456_789);
         rnd1.popFront();
@@ -1146,7 +1148,7 @@ alias Mt19937_64 = MersenneTwisterEngine!(ulong, 64, 312, 156, 31,
 {
     import std.range;
     // Check .save works
-    static foreach (Type; std.meta.AliasSeq!(Mt19937, Mt19937_64))
+    static foreach (Type; _Items!(Mt19937, Mt19937_64))
     {{
         auto gen1 = Type(123_456_789);
         gen1.popFront();
@@ -1171,7 +1173,7 @@ alias Mt19937_64 = MersenneTwisterEngine!(ulong, 64, 312, 156, 31,
     ulong[] expected10kValue = [4123659995uL, 4123659995uL,
                                 51991688252792uL, 3031481165133029945uL];
 
-    static foreach (i, R; std.meta.AliasSeq!(MT!(uint, 32), MT!(ulong, 32), MT!(ulong, 48), MT!(ulong, 64)))
+    static foreach (i, R; _Items!(MT!(uint, 32), MT!(ulong, 32), MT!(ulong, 48), MT!(ulong, 64)))
     {{
         auto a = R();
         a.seed(a.defaultSeed); // checks that some alternative paths in `seed` are utilized
@@ -1446,7 +1448,7 @@ alias Xorshift    = Xorshift128;                            /// ditto
         2464530826, 1604040631, 3653403911]
     ];
 
-    alias XorshiftTypes = std.meta.AliasSeq!(Xorshift32, Xorshift64, Xorshift96, Xorshift128, Xorshift160, Xorshift192);
+    alias XorshiftTypes = _Items!(Xorshift32, Xorshift64, Xorshift96, Xorshift128, Xorshift160, Xorshift192);
 
     foreach (I, Type; XorshiftTypes)
     {
@@ -1891,7 +1893,7 @@ if ((isIntegral!(CommonType!(T1, T2)) || isSomeChar!(CommonType!(T1, T2))) &&
     auto c = uniform(0.0, 1.0);
     assert(0 <= c && c < 1);
 
-    static foreach (T; std.meta.AliasSeq!(char, wchar, dchar, byte, ubyte, short, ushort,
+    static foreach (T; _Items!(char, wchar, dchar, byte, ubyte, short, ushort,
                           int, uint, long, ulong, float, double, real))
     {{
         T lo = 0, hi = 100;
@@ -1945,7 +1947,7 @@ if ((isIntegral!(CommonType!(T1, T2)) || isSomeChar!(CommonType!(T1, T2))) &&
 
     auto reproRng = Xorshift(239842);
 
-    static foreach (T; std.meta.AliasSeq!(char, wchar, dchar, byte, ubyte, short,
+    static foreach (T; _Items!(char, wchar, dchar, byte, ubyte, short,
                           ushort, int, uint, long, ulong))
     {{
         T lo = T.min + 10, hi = T.max - 10;
@@ -2080,7 +2082,7 @@ if (!is(T == enum) && (isIntegral!T || isSomeChar!T))
 
 @safe unittest
 {
-    static foreach (T; std.meta.AliasSeq!(char, wchar, dchar, byte, ubyte, short, ushort,
+    static foreach (T; _Items!(char, wchar, dchar, byte, ubyte, short, ushort,
                           int, uint, long, ulong))
     {{
         T init = uniform!T();
@@ -2224,7 +2226,7 @@ do
     static foreach (UniformRNG; PseudoRngTypes)
     {{
 
-        static foreach (T; std.meta.AliasSeq!(float, double, real))
+        static foreach (T; _Items!(float, double, real))
         {{
             UniformRNG rng = UniformRNG(123_456_789);
 
@@ -2797,7 +2799,7 @@ if (isRandomAccessRange!Range)
     import std.conv;
     int[] a = [ 0, 1, 2, 3, 4, 5, 6, 7, 8 ];
     int[] c;
-    static foreach (UniformRNG; std.meta.AliasSeq!(void, PseudoRngTypes))
+    static foreach (UniformRNG; _Items!(void, PseudoRngTypes))
     {{
         static if (is(UniformRNG == void))
         {

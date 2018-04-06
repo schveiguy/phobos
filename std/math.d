@@ -174,9 +174,8 @@ else version (X86)
     private alias haveSSE = core.cpuid.sse;
 }
 
-version(unittest)
+version(unittest) private
 {
-    import core.stdc.stdio; // : sprintf;
 
     static if (real.sizeof > double.sizeof)
         enum uint useDigits = 16;
@@ -190,8 +189,9 @@ version(unittest)
      *  0       nomatch
      */
 
-    private bool equalsDigit(real x, real y, uint ndigits) @safe nothrow @nogc
+    bool equalsDigit()(real x, real y, uint ndigits) @safe nothrow @nogc
     {
+        import core.stdc.stdio; // : sprintf;
         if (signbit(x) != signbit(y))
             return 0;
 

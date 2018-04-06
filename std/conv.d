@@ -5337,10 +5337,11 @@ version(unittest) private class __conv_EmplaceTestClass
         assert(s.i == 2);
     }
 }
+
 version(unittest)
 {
     //Ambiguity
-    struct __std_conv_S
+    static struct __std_conv_S
     {
         int i;
         this(__std_conv_SS ss)         {assert(0);}
@@ -5350,23 +5351,24 @@ version(unittest)
             return s;
         }
     }
-    struct __std_conv_SS
+    static struct __std_conv_SS
     {
         int j;
         __std_conv_S s;
         ref __std_conv_S foo() return @property {s.i = j; return s;}
         alias foo this;
     }
-    static assert(is(__std_conv_SS : __std_conv_S));
-    @system unittest
-    {
-        __std_conv_S s = void;
-        __std_conv_SS ss = __std_conv_SS(1);
+}
 
-        __std_conv_S sTest1 = ss; //this calls "SS alias this" (and not "S.this(SS)")
-        emplace(&s, ss); //"alias this" should take precedence in emplace over "opCall"
-        assert(s.i == 1);
-    }
+@system unittest
+{
+    static assert(is(__std_conv_SS : __std_conv_S));
+    __std_conv_S s = void;
+    __std_conv_SS ss = __std_conv_SS(1);
+
+    __std_conv_S sTest1 = ss; //this calls "SS alias this" (and not "S.this(SS)")
+    emplace(&s, ss); //"alias this" should take precedence in emplace over "opCall"
+    assert(s.i == 1);
 }
 
 //Nested classes

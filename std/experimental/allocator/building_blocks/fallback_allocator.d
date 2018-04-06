@@ -29,11 +29,10 @@ struct FallbackAllocator(Primary, Fallback)
 
     // Need both allocators to be stateless
     // This is to avoid using default initialized stateful allocators
-    version(unittest)
-    static if (!stateSize!Primary && !stateSize!Fallback)
     @system unittest
     {
-        testAllocator!(() => FallbackAllocator());
+        static if (!stateSize!Primary && !stateSize!Fallback)
+            testAllocator!(() => FallbackAllocator());
     }
 
     /// The primary allocator.

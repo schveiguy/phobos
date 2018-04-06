@@ -481,8 +481,6 @@ Forwards each of the methods in `funs` (if defined) to `member`.
 
 version(unittest)
 {
-    import std.experimental.allocator : RCIAllocator, RCISharedAllocator;
-
     package void testAllocator(alias make)()
     {
         import std.conv : text;
@@ -608,9 +606,11 @@ version(unittest)
     }
 
     package void testAllocatorObject(RCAllocInterface)(RCAllocInterface a)
-    if (is(RCAllocInterface == RCIAllocator)
-        || is (RCAllocInterface == shared RCISharedAllocator))
     {
+        import std.experimental.allocator : RCIAllocator, RCISharedAllocator;
+
+        static assert(is(RCAllocInterface == RCIAllocator) ||
+                      is (RCAllocInterface == shared RCISharedAllocator));
         import std.conv : text;
         import std.math : isPowerOf2;
         import std.stdio : writeln, stderr;

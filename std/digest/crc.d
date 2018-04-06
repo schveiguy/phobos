@@ -60,7 +60,8 @@ module std.digest.crc;
 
 public import std.digest;
 
-version(unittest) import std.exception;
+// Note: we no longer import inside version(unittest) blocks
+//version(unittest) import std.exception;
 
 
 ///
@@ -661,6 +662,7 @@ alias CRC64ISODigest = WrapperDigest!CRC64ISO;
 {
     import std.conv : hexString;
     import std.range;
+    import std.exception;
 
     auto crc = new CRC32Digest();
 

@@ -61,7 +61,13 @@ import std.functional : binaryFun;
 
 public import std.container.util;
 
-version(unittest) debug = RBDoChecks;
+version(unittest)
+{
+    debug = RBDoChecks;
+    // TODO: replace version(unittest) with version(RBTreeExtraChecks), and
+    // alter the makefile.
+    version = RBTreeExtraChecks;
+}
 
 //debug = RBDoChecks;
 
@@ -745,7 +751,7 @@ if (is(typeof(binaryFun!less(T.init, T.init))))
 
     alias _less = binaryFun!less;
 
-    version(unittest)
+    version(RBTreeExtraChecks)
     {
         static if (is(typeof(less) == string))
         {
@@ -755,18 +761,21 @@ if (is(typeof(binaryFun!less(T.init, T.init))))
             enum doUnittest = false;
 
         // note, this must be final so it does not affect the vtable layout
-        bool arrayEqual(T[] arr)
+        static if(doUnittest)
         {
-            if (walkLength(this[]) == arr.length)
+            private final bool arrayEqual(T[] arr)
             {
-                foreach (v; arr)
+                if (walkLength(this[]) == arr.length)
                 {
-                    if (!(v in this))
-                        return false;
+                    foreach (v; arr)
+                    {
+                        if (!(v in this))
+                            return false;
+                    }
+                    return true;
                 }
-                return true;
+                return false;
             }
-            return false;
         }
     }
     else

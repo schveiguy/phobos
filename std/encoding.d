@@ -3658,7 +3658,7 @@ version(unittest)
         }
     }
 
-    string makeReadable(string s)
+    string makeReadable()(string s)
     {
         string r = "\"";
         foreach (char c;s)
@@ -3678,7 +3678,7 @@ version(unittest)
         return r;
     }
 
-    string makeReadable(wstring s)
+    string makeReadable()(wstring s)
     {
         string r = "\"";
         foreach (wchar c;s)
@@ -3700,7 +3700,7 @@ version(unittest)
         return r;
     }
 
-    string makeReadable(dstring s)
+    string makeReadable()(dstring s)
     {
         string r = "\"";
         foreach (dchar c; s)
@@ -3732,7 +3732,7 @@ version(unittest)
         return r;
     }
 
-    char toHexDigit(int n)
+    char toHexDigit()(int n)
     {
         return "0123456789ABCDEF"[n & 0xF];
     }

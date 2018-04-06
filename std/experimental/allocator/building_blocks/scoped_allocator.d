@@ -20,11 +20,10 @@ simpler design combining `AllocatorList` with `Region` is recommended.
 */
 struct ScopedAllocator(ParentAllocator)
 {
-    static if (!stateSize!ParentAllocator)
+    // This test is available only for stateless allocators
+    @system unittest
     {
-        // This test is available only for stateless allocators
-        version(unittest)
-        @system unittest
+        static if (!stateSize!ParentAllocator)
         {
             testAllocator!(() => ScopedAllocator());
         }

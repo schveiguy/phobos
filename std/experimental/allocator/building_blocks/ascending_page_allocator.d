@@ -662,7 +662,7 @@ public:
 
 version(unittest)
 {
-    static void testrw(void[] b) @nogc nothrow
+    static void testrw()(void[] b) @nogc nothrow
     {
         ubyte* buf = cast(ubyte*) b.ptr;
         buf[0] = 100;
@@ -671,7 +671,7 @@ version(unittest)
         assert(buf[b.length - 1] == 101);
     }
 
-    static size_t getPageSize() @nogc nothrow
+    static size_t getPageSize()() @nogc nothrow
     {
         size_t pageSize;
         version(Posix)

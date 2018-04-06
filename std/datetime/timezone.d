@@ -53,7 +53,8 @@ else version(Posix)
     import core.sys.posix.sys.types : time_t;
 }
 
-version(unittest) import std.exception : assertThrown;
+// Note: We no longer import inside version(unittest) blocks
+//version(unittest) import std.exception : assertThrown;
 
 
 /++
@@ -220,6 +221,7 @@ public:
     @system unittest
     {
         import core.exception : AssertError;
+        import std.exception: assertThrown;
         import std.conv : to;
         import std.file : exists, isFile;
         import std.format : format;
@@ -1510,6 +1512,7 @@ package:
         }
 
         import std.datetime.date : DateTimeException;
+        import std.exception: assertThrown;
         assertThrown!DateTimeException(testSTZInvalid(dur!"minutes"(1440)));
         assertThrown!DateTimeException(testSTZInvalid(dur!"minutes"(-1440)));
 
@@ -1581,6 +1584,7 @@ package:
         }
 
         import std.datetime.date : DateTimeException;
+        import std.exception: assertThrown;
         assertThrown!DateTimeException(testSTZInvalid(dur!"minutes"(1440)));
         assertThrown!DateTimeException(testSTZInvalid(dur!"minutes"(-1440)));
 
@@ -1663,6 +1667,7 @@ package:
     {
         import core.exception : AssertError;
         import std.format : format;
+        import std.exception: assertThrown;
 
         foreach (str; ["", "Z", "-", "+", "-:", "+:", "-1:", "+1:", "+1", "-1",
                        "-24:00", "+24:00", "-24", "+24", "-2400", "+2400",
@@ -1825,6 +1830,7 @@ package:
     {
         import core.exception : AssertError;
         import std.format : format;
+        import std.exception: assertThrown;
 
         foreach (str; ["", "Z", "-", "+", "-:", "+:", "-1:", "+1:", "+1", "-1",
                        "-24:00", "+24:00", "-24", "+24", "-2400", "-2400",
@@ -2543,7 +2549,7 @@ public:
 
     version(Posix) @system unittest
     {
-        import std.exception : assertNotThrown;
+        import std.exception : assertThrown, assertNotThrown;
         import std.stdio : writefln;
         static void testPTZSuccess(string tzName)
         {

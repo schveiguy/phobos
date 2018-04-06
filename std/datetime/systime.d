@@ -90,11 +90,13 @@ else version(Posix)
     import core.sys.posix.sys.types : time_t;
 }
 
+// Note: we no longer import inside version(unittest)
+/+
 version(unittest)
 {
     import core.exception : AssertError;
     import std.exception : assertThrown;
-}
+}+/
 
 
 @safe unittest
@@ -483,6 +485,7 @@ public:
     @safe unittest
     {
         import core.time;
+        import std.exception: assertThrown;
         static void test(DateTime dt, Duration fracSecs, immutable TimeZone tz, long expected)
         {
             auto sysTime = SysTime(dt, fracSecs, tz);
@@ -885,6 +888,7 @@ public:
     @safe unittest
     {
         import std.range : chain;
+        import std.exception: assertThrown;
 
         static void test(SysTime st, int year, in SysTime expected)
         {
@@ -954,7 +958,7 @@ public:
 
     @safe unittest
     {
-        import std.exception : assertNotThrown;
+        import std.exception : assertThrown, assertNotThrown;
         foreach (st; testSysTimesBC)
         {
             auto msg = format("SysTime: %s", st);
@@ -1016,6 +1020,7 @@ public:
     @safe unittest
     {
         import std.range : chain;
+        import std.exception: assertThrown;
         static void test(SysTime st, int year, in SysTime expected)
         {
             st.yearBC = year;
@@ -1156,6 +1161,7 @@ public:
     {
         import std.algorithm.iteration : filter;
         import std.range : chain;
+        import std.exception: assertThrown;
 
         static void test(SysTime st, Month month, in SysTime expected)
         {
@@ -1318,6 +1324,7 @@ public:
     {
         import std.range : chain;
         import std.traits : EnumMembers;
+        import std.exception: assertThrown;
 
         foreach (day; chain(testDays))
         {
@@ -1479,6 +1486,7 @@ public:
     @safe unittest
     {
         import std.range : chain;
+        import std.exception: assertThrown;
 
         foreach (hour; chain(testHours))
         {
@@ -1602,6 +1610,7 @@ public:
     @safe unittest
     {
         import std.range : chain;
+        import std.exception: assertThrown;
 
         foreach (minute; testMinSecs)
         {
@@ -1728,6 +1737,7 @@ public:
     @safe unittest
     {
         import std.range : chain;
+        import std.exception: assertThrown;
 
         foreach (second; testMinSecs)
         {
@@ -1881,6 +1891,7 @@ public:
     {
         import std.range : chain;
         import core.time;
+        import std.exception: assertThrown;
 
         foreach (fracSec; testFracSecs)
         {
@@ -4853,6 +4864,7 @@ public:
         import core.time;
         static void testST(SysTime orig, int hours, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             orig.roll!"hours"(hours);
             if (orig != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", orig, expected), __FILE__, line);
@@ -5071,6 +5083,7 @@ public:
         import core.time;
         static void testST(SysTime orig, int minutes, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             orig.roll!"minutes"(minutes);
             if (orig != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", orig, expected), __FILE__, line);
@@ -5282,6 +5295,7 @@ public:
         import core.time;
         static void testST(SysTime orig, int seconds, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             orig.roll!"seconds"(seconds);
             if (orig != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", orig, expected), __FILE__, line);
@@ -5500,6 +5514,7 @@ public:
         import core.time;
         static void testST(SysTime orig, int milliseconds, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             orig.roll!"msecs"(milliseconds);
             if (orig != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", orig, expected), __FILE__, line);
@@ -5606,6 +5621,7 @@ public:
         import core.time;
         static void testST(SysTime orig, long microseconds, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             orig.roll!"usecs"(microseconds);
             if (orig != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", orig, expected), __FILE__, line);
@@ -5736,6 +5752,7 @@ public:
         import core.time;
         static void testST(SysTime orig, long hnsecs, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             orig.roll!"hnsecs"(hnsecs);
             if (orig != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", orig, expected), __FILE__, line);
@@ -5958,6 +5975,7 @@ public:
 
         static void testST(in SysTime orig, long hnsecs, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             auto result = orig + dur!"hnsecs"(hnsecs);
             if (result != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", result, expected), __FILE__, line);
@@ -6154,6 +6172,7 @@ public:
 
         static void testST(SysTime orig, long hnsecs, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             auto r = orig += dur!"hnsecs"(hnsecs);
             if (orig != expected)
                 throw new AssertError(format("Failed 1. actual [%s] != expected [%s]", orig, expected), __FILE__, line);
@@ -6783,6 +6802,7 @@ public:
         import core.time;
         void test(Date date, SysTime st, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             if (date.dayOfGregorianCal != st.dayOfGregorianCal)
             {
                 throw new AssertError(format("Date [%s] SysTime [%s]", date.dayOfGregorianCal, st.dayOfGregorianCal),
@@ -7002,6 +7022,7 @@ public:
         import core.time;
         void testST(SysTime orig, int day, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             orig.dayOfGregorianCal = day;
             if (orig != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", orig, expected), __FILE__, line);
@@ -7039,6 +7060,7 @@ public:
 
         void testST2(int day, in SysTime expected, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             st.dayOfGregorianCal = day;
             if (st != expected)
                 throw new AssertError(format("Failed. actual [%s] != expected [%s]", st, expected), __FILE__, line);
@@ -8356,6 +8378,7 @@ public:
     @safe unittest
     {
         import core.time;
+        import std.exception: assertThrown;
         foreach (str; ["", "20100704000000", "20100704 000000", "20100704t000000",
                        "20100704T000000.", "20100704T000000.A", "20100704T000000.Z",
                        "20100704T000000.0000000A", "20100704T000000.00000000A",
@@ -8392,6 +8415,7 @@ public:
 
         static void test(string str, SysTime st, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             if (SysTime.fromISOString(str) != st)
                 throw new AssertError("unittest failure", __FILE__, line);
         }
@@ -8626,6 +8650,7 @@ public:
     @safe unittest
     {
         import core.time;
+        import std.exception: assertThrown;
         foreach (str; ["", "20100704000000", "20100704 000000",
                        "20100704t000000", "20100704T000000.", "20100704T000000.0",
                        "2010-07:0400:00:00", "2010-07-04 00:00:00",
@@ -8662,6 +8687,7 @@ public:
 
         static void test(string str, SysTime st, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             if (SysTime.fromISOExtString(str) != st)
                 throw new AssertError("unittest failure", __FILE__, line);
         }
@@ -8870,6 +8896,7 @@ public:
     @safe unittest
     {
         import core.time;
+        import std.exception: assertThrown;
         foreach (str; ["", "20100704000000", "20100704 000000",
                        "20100704t000000", "20100704T000000.", "20100704T000000.0",
                        "2010-07-0400:00:00", "2010-07-04 00:00:00", "2010-07-04t00:00:00",
@@ -8908,6 +8935,7 @@ public:
 
         static void test(string str, SysTime st, size_t line = __LINE__)
         {
+            import core.exception : AssertError;
             if (SysTime.fromSimpleString(str) != st)
                 throw new AssertError("unittest failure", __FILE__, line);
         }
@@ -9897,23 +9925,23 @@ afterMon: stripAndCheckLen(value[3 .. value.length], "1200:00A".length);
     assertThrown!DateTimeException(parseRFC822DateTime(badStr));
 }
 
-version(unittest) void testParse822(alias cr)(string str, SysTime expected, size_t line = __LINE__)
+/+version(unittest) void testParse822(alias cr)(string str, SysTime expected, size_t line = __LINE__)
 {
     import std.format : format;
     auto value = cr(str);
     auto result = parseRFC822DateTime(value);
     if (result != expected)
         throw new AssertError(format("wrong result. expected [%s], actual[%s]", expected, result), __FILE__, line);
-}
+}+/
 
-version(unittest) void testBadParse822(alias cr)(string str, size_t line = __LINE__)
+/+version(unittest) void testBadParse822(alias cr)(string str, size_t line = __LINE__)
 {
     try
         parseRFC822DateTime(cr(str));
     catch (DateTimeException)
         return;
     throw new AssertError("No DateTimeException was thrown", __FILE__, line);
-}
+}+/
 
 @system unittest
 {
@@ -9927,6 +9955,26 @@ version(unittest) void testBadParse822(alias cr)(string str, size_t line = __LIN
     import std.range : chain, iota, take;
     import std.stdio : writefln, writeln;
     import std.string : representation;
+
+    static void testBadParse822(alias cr)(string str, size_t line = __LINE__)
+    {
+        import core.exception : AssertError;
+        try
+            parseRFC822DateTime(cr(str));
+        catch (DateTimeException)
+            return;
+        throw new AssertError("No DateTimeException was thrown", __FILE__, line);
+    }
+
+    static void testParse822(alias cr)(string str, SysTime expected, size_t line = __LINE__)
+    {
+        import std.format : format;
+        import core.exception : AssertError;
+        auto value = cr(str);
+        auto result = parseRFC822DateTime(value);
+        if (result != expected)
+            throw new AssertError(format("wrong result. expected [%s], actual[%s]", expected, result), __FILE__, line);
+    }
 
     static struct Rand3Letters
     {
@@ -10192,7 +10240,7 @@ version(unittest) void testBadParse822(alias cr)(string str, size_t line = __LIN
 {
     import std.algorithm.iteration : filter, map;
     import std.ascii : letters;
-    import std.exception : collectExceptionMsg;
+    import std.exception : assertThrown, collectExceptionMsg;
     import std.format : format;
     import std.meta : AliasSeq;
     import std.range : chain, iota;
@@ -10207,6 +10255,16 @@ version(unittest) void testBadParse822(alias cr)(string str, size_t line = __LIN
     auto dst2 = SysTime(DateTime(1976, 7, 4, 5, 4, 0), UTC());
     auto tooLate1 = SysTime(Date(10_000, 1, 1), UTC());
     auto tooLate2 = SysTime(DateTime(12_007, 12, 31, 12, 22, 19), UTC());
+
+    static void testParse822(alias cr)(string str, SysTime expected, size_t line = __LINE__)
+    {
+        import std.format : format;
+        import core.exception : AssertError;
+        auto value = cr(str);
+        auto result = parseRFC822DateTime(value);
+        if (result != expected)
+            throw new AssertError(format("wrong result. expected [%s], actual[%s]", expected, result), __FILE__, line);
+    }
 
     static foreach (cr; AliasSeq!(function(string a){return cast(char[]) a;},
                            function(string a){return cast(ubyte[]) a;},
@@ -10504,6 +10562,7 @@ if (isSomeString!S)
 @safe unittest
 {
     import core.time;
+    import std.exception: assertThrown;
     static void testFSInvalid(string isoString)
     {
         fracSecsFromISOString(isoString);
@@ -11113,7 +11172,9 @@ version(unittest)
                                DayOfYear(365, MonthDay(12, 30)),
                                DayOfYear(366, MonthDay(12, 31))];
 
-    void initializeTests() @safe
+    // made a template to avoid instantiation when not running unittests for
+    // phobos.
+    void initializeTests()() @safe
     {
         import std.algorithm.sorting : sort;
         import std.typecons : Rebindable;

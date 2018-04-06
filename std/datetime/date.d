@@ -47,7 +47,8 @@ import std.traits : isSomeString, Unqual;
 import std.typecons : Flag;
 import std.range.primitives : isOutputRange;
 
-version(unittest) import std.exception : assertThrown;
+// Note, we no longer import inside version(unittest)
+//version(unittest) import std.exception : assertThrown;
 
 @safe unittest
 {
@@ -637,6 +638,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((in DateTime dt){dt.yearBC;}(DateTime(Date(1, 1, 1))));
 
         auto dt = DateTime(1999, 7, 6, 12, 30, 33);
@@ -677,6 +679,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((DateTime dt){dt.yearBC = -1;}(DateTime(Date(1, 1, 1))));
 
         auto dt = DateTime(1999, 7, 6, 12, 30, 33);
@@ -735,6 +738,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         static void testDT(DateTime dt, Month month, in DateTime expected = DateTime.init, size_t line = __LINE__)
         {
             dt.month = month;
@@ -818,7 +822,7 @@ public:
 
     @safe unittest
     {
-        import std.exception : assertNotThrown;
+        import std.exception : assertThrown, assertNotThrown;
 
         static void testDT(DateTime dt, int day)
         {
@@ -939,6 +943,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((){DateTime(Date(1999, 7, 6), TimeOfDay(0, 0, 0)).hour = 24;}());
 
         auto dt = DateTime.init;
@@ -989,6 +994,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((){DateTime.init.minute = 60;}());
 
         auto dt = DateTime.init;
@@ -1039,6 +1045,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((){DateTime.init.second = 60;}());
 
         auto dt = DateTime.init;
@@ -3173,6 +3180,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException(DateTime.fromISOString(""));
         assertThrown!DateTimeException(DateTime.fromISOString("20100704000000"));
         assertThrown!DateTimeException(DateTime.fromISOString("20100704 000000"));
@@ -3274,6 +3282,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException(DateTime.fromISOExtString(""));
         assertThrown!DateTimeException(DateTime.fromISOExtString("20100704000000"));
         assertThrown!DateTimeException(DateTime.fromISOExtString("20100704 000000"));
@@ -3370,6 +3379,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException(DateTime.fromISOString(""));
         assertThrown!DateTimeException(DateTime.fromISOString("20100704000000"));
         assertThrown!DateTimeException(DateTime.fromISOString("20100704 000000"));
@@ -3763,7 +3773,7 @@ public:
 
     @safe unittest
     {
-        import std.exception : assertNotThrown;
+        import std.exception : assertThrown, assertNotThrown;
         assert(Date(1, 1, 1) == Date.init);
 
         static void testDate(in Date date, int year, int month, int day)
@@ -4121,6 +4131,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         static void testDateInvalid(Date date, int year)
         {
             date.year = year;
@@ -4170,6 +4181,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((in Date date){date.yearBC;}(Date(1, 1, 1)));
 
         auto date = Date(0, 7, 6);
@@ -4211,6 +4223,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((Date date){date.yearBC = -1;}(Date(1, 1, 1)));
 
         auto date = Date(0, 7, 6);
@@ -4271,6 +4284,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         static void testDate(Date date, Month month, in Date expected = Date.init)
         {
             date.month = month;
@@ -4349,7 +4363,7 @@ public:
 
     @safe unittest
     {
-        import std.exception : assertNotThrown;
+        import std.exception : assertThrown, assertNotThrown;
 
         static void testDate(Date date, int day)
         {
@@ -7524,6 +7538,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException(Date.fromISOString(""));
         assertThrown!DateTimeException(Date.fromISOString("990704"));
         assertThrown!DateTimeException(Date.fromISOString("0100704"));
@@ -7662,6 +7677,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException(Date.fromISOExtString(""));
         assertThrown!DateTimeException(Date.fromISOExtString("990704"));
         assertThrown!DateTimeException(Date.fromISOExtString("0100704"));
@@ -7800,6 +7816,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException(Date.fromSimpleString(""));
         assertThrown!DateTimeException(Date.fromSimpleString("990704"));
         assertThrown!DateTimeException(Date.fromSimpleString("0100704"));
@@ -8188,6 +8205,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assert(TimeOfDay(0, 0) == TimeOfDay.init);
 
         {
@@ -8322,6 +8340,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((){TimeOfDay(0, 0, 0).hour = 24;}());
 
         auto tod = TimeOfDay(0, 0, 0);
@@ -8373,6 +8392,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((){TimeOfDay(0, 0, 0).minute = 60;}());
 
         auto tod = TimeOfDay(0, 0, 0);
@@ -8424,6 +8444,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException((){TimeOfDay(0, 0, 0).second = 60;}());
 
         auto tod = TimeOfDay(0, 0, 0);
@@ -9086,6 +9107,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException(TimeOfDay.fromISOString(""));
         assertThrown!DateTimeException(TimeOfDay.fromISOString("0"));
         assertThrown!DateTimeException(TimeOfDay.fromISOString("00"));
@@ -9211,6 +9233,7 @@ public:
 
     @safe unittest
     {
+        import std.exception : assertThrown;
         assertThrown!DateTimeException(TimeOfDay.fromISOExtString(""));
         assertThrown!DateTimeException(TimeOfDay.fromISOExtString("0"));
         assertThrown!DateTimeException(TimeOfDay.fromISOExtString("00"));
@@ -10403,6 +10426,7 @@ if (isSomeString!T)
 {
     import std.conv : to;
     import std.traits : EnumMembers;
+    import std.exception : assertThrown;
     foreach (badStr; ["Ja", "Janu", "Januar", "Januarys", "JJanuary", "JANUARY",
                       "JAN", "january", "jaNuary", "jaN", "jaNuaRy", "jAn"])
     {

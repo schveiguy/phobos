@@ -4714,11 +4714,12 @@ private static:
     alias Implementation = AutoImplement!(Issue17177, how, templateNot!isFinalFunction);
 }
 
-version(unittest)
+//version(unittest)
+@system unittest
 {
     // Issue 10647
     // Add prefix "issue10647_" as a workaround for issue 1238
-    private string issue10647_generateDoNothing(C, alias fun)() @property
+    static string issue10647_generateDoNothing(C, alias fun)() @property
     {
         string stmt;
 
@@ -4732,24 +4733,24 @@ version(unittest)
         return stmt;
     }
 
-    private template issue10647_isAlwaysTrue(alias fun)
+    template issue10647_isAlwaysTrue(alias fun)
     {
         enum issue10647_isAlwaysTrue = true;
     }
 
     // Do nothing template
-    private template issue10647_DoNothing(Base)
+    template issue10647_DoNothing(Base)
     {
         alias issue10647_DoNothing = AutoImplement!(Base, issue10647_generateDoNothing, issue10647_isAlwaysTrue);
     }
 
+/*}
+@system unittest
+{*/
     // A class to be overridden
-    private class issue10647_Foo{
+    static class issue10647_Foo{
         void bar(int a) { }
     }
-}
-@system unittest
-{
     auto foo = new issue10647_DoNothing!issue10647_Foo();
     foo.bar(13);
 }
@@ -5725,17 +5726,15 @@ private template TypeMod(T)
     enum TypeMod = cast(TypeModifier)(mod1 | mod2);
 }
 
-version(unittest)
+version(unittest) template UnittestFuncInfo(alias f)
 {
-    private template UnittestFuncInfo(alias f)
-    {
-        enum name = __traits(identifier, f);
-        alias type = FunctionTypeOf!f;
-    }
+    enum name = __traits(identifier, f);
+    alias type = FunctionTypeOf!f;
 }
+
 @system unittest
 {
-    class A
+    static class A
     {
         int draw() { return 1; }
         @property int value() { return 2; }
@@ -5764,7 +5763,7 @@ version(unittest)
     static assert(findCovariantFunction!(UnittestFuncInfo!nomatch,  A, methods) == -1);
 
     // considering opDispatch
-    class B
+    static class B
     {
         void opDispatch(string name, A...)(A) {}
     }

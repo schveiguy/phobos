@@ -3498,14 +3498,10 @@ pure @safe unittest// Uint24 tests
     }}
 }
 
-version(unittest)
-{
-    private alias AllSets = AliasSeq!(InversionList!GcPolicy, InversionList!ReallocPolicy);
-}
-
 pure @safe unittest// core set primitives test
 {
     import std.conv : text;
+    alias AllSets = AliasSeq!(InversionList!GcPolicy, InversionList!ReallocPolicy);
     foreach (CodeList; AllSets)
     {
         CodeList a;
@@ -3627,6 +3623,7 @@ pure @safe unittest
 pure @safe unittest
 {   // full set operations
     import std.conv : text;
+    alias AllSets = AliasSeq!(InversionList!GcPolicy, InversionList!ReallocPolicy);
     foreach (CodeList; AllSets)
     {
         CodeList a, b, c, d;

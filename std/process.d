@@ -941,14 +941,14 @@ private void setCLOEXEC(int fd, bool on) nothrow @nogc
 
 @system unittest // Command line arguments in spawnProcess().
 {
-    version (Windows) TestScript prog =
+    version (Windows) auto prog =
        "if not [%~1]==[foo] ( exit 1 )
         if not [%~2]==[bar] ( exit 2 )
-        exit 0";
-    else version (Posix) TestScript prog =
+        exit 0".testScript;
+    else version (Posix) auto prog =
        `if test "$1" != "foo"; then exit 1; fi
         if test "$2" != "bar"; then exit 2; fi
-        exit 0`;
+        exit 0`.testScript;
     assert(wait(spawnProcess(prog.path)) == 1);
     assert(wait(spawnProcess([prog.path])) == 1);
     assert(wait(spawnProcess([prog.path, "foo"])) == 2);
@@ -982,7 +982,7 @@ version (Posix) @system unittest
     // file descriptor is open.
     // Can't use this for arbitrary descriptors as many shells only support
     // single digit fds.
-    TestScript testDefaults = `command >&0 && command >&1 && command >&2`;
+    auto testDefaults = `command >&0 && command >&1 && command >&2`.testScript;
     assert(execute(testDefaults.path).status == 0);
     assert(execute(testDefaults.path, null, Config.inheritFDs).status == 0);
 
@@ -993,7 +993,7 @@ version (Posix) @system unittest
         // try /proc/<pid>/fd/ on linux
         version (linux)
         {
-            TestScript proc = "ls /proc/$$/fd";
+            auto proc = "ls /proc/$$/fd".testScript;
             auto procRes = execute(proc.path, null);
             if (procRes.status == 0)
             {
@@ -1006,7 +1006,7 @@ version (Posix) @system unittest
         }
 
         // try fuser (might sometimes need permissions)
-        TestScript fuser = "echo $$ && fuser -f " ~ path;
+        auto fuser = testScript("echo $$ && fuser -f " ~ path);
         auto fuserRes = execute(fuser.path, null);
         if (fuserRes.status == 0)
         {
@@ -1018,7 +1018,7 @@ version (Posix) @system unittest
         }
 
         // last resort, try lsof (not available on all Posix)
-        TestScript lsof = "lsof -p$$";
+        auto lsof = "lsof -p$$".testScript;
         auto lsofRes = execute(lsof.path, null);
         if (lsofRes.status == 0)
         {
@@ -1036,7 +1036,7 @@ version (Posix) @system unittest
 @system unittest // Environment variables in spawnProcess().
 {
     // We really should use set /a on Windows, but Wine doesn't support it.
-    version (Windows) TestScript envProg =
+    version (Windows) auto envProg =
        `if [%STD_PROCESS_UNITTEST1%] == [1] (
             if [%STD_PROCESS_UNITTEST2%] == [2] (exit 3)
             exit 1
@@ -1046,15 +1046,15 @@ version (Posix) @system unittest
             exit 4
         )
         if [%STD_PROCESS_UNITTEST2%] == [2] (exit 2)
-        exit 0`;
-    version (Posix) TestScript envProg =
+        exit 0`.testScript;
+    version (Posix) auto envProg =
        `if test "$std_process_unittest1" = ""; then
             std_process_unittest1=0
         fi
         if test "$std_process_unittest2" = ""; then
             std_process_unittest2=0
         fi
-        exit $(($std_process_unittest1+$std_process_unittest2))`;
+        exit $(($std_process_unittest1+$std_process_unittest2))`.testScript;
 
     environment.remove("std_process_unittest1"); // Just in case.
     environment.remove("std_process_unittest2");
@@ -1082,14 +1082,14 @@ version (Posix) @system unittest
 {
     import std.path : buildPath;
     import std.string;
-    version (Windows) TestScript prog =
+    version (Windows) auto prog =
        "set /p INPUT=
         echo %INPUT% output %~1
-        echo %INPUT% error %~2 1>&2";
-    else version (Posix) TestScript prog =
+        echo %INPUT% error %~2 1>&2".testScript;
+    else version (Posix) auto prog =
        "read INPUT
         echo $INPUT output $1
-        echo $INPUT error $2 >&2";
+        echo $INPUT error $2 >&2".testScript;
 
     // Pipes
     void testPipes(Config config)
@@ -1149,8 +1149,9 @@ version (Posix) @system unittest
     version(Posix)
     {
         import std.path : buildPath;
-        import std.file : remove, write, setAttributes;
+        import std.file : remove, write, setAttributes, tempDir;
         import core.sys.posix.sys.stat : S_IRUSR, S_IWUSR, S_IXUSR, S_IRGRP, S_IXGRP, S_IROTH, S_IXOTH;
+        import std.conv: to;
         string deleteme = buildPath(tempDir(), "deleteme.std.process.unittest.pid") ~ to!string(thisProcessID);
         write(deleteme, "");
         scope(exit) remove(deleteme);
@@ -1163,7 +1164,8 @@ version (Posix) @system unittest
 @system unittest // Specifying a working directory.
 {
     import std.path;
-    TestScript prog = "echo foo>bar";
+    import std.file;
+    auto prog = "echo foo>bar".testScript;
 
     auto directory = uniqueTempPath();
     mkdir(directory);
@@ -1177,7 +1179,8 @@ version (Posix) @system unittest
 @system unittest // Specifying a bad working directory.
 {
     import std.exception : assertThrown;
-    TestScript prog = "echo";
+    import std.file;
+    auto prog = "echo".testScript;
 
     auto directory = uniqueTempPath();
     assertThrown!ProcessException(spawnProcess([prog.path], null, Config.none, directory));
@@ -1206,7 +1209,7 @@ version (Posix) @system unittest
 
 @system unittest // Specifying empty working directory.
 {
-    TestScript prog = "";
+    auto prog = "".testScript;
 
     string directory = "";
     assert(directory.ptr && !directory.length);
@@ -1216,6 +1219,7 @@ version (Posix) @system unittest
 @system unittest // Reopening the standard streams (issue 13258)
 {
     import std.string;
+    import std.file;
     void fun()
     {
         spawnShell("echo foo").wait();
@@ -1346,7 +1350,7 @@ version (Windows)
 @system unittest
 {
     import std.string;
-    TestScript prog = "echo %0 %*";
+    auto prog = "echo %0 %*".testScript;
     auto outputFn = uniqueTempPath();
     scope(exit) if (exists(outputFn)) remove(outputFn);
     auto args = [`a b c`, `a\b\c\`, `a"b"c"`];
@@ -1673,8 +1677,8 @@ int wait(Pid pid) @safe
 
 @system unittest // Pid and wait()
 {
-    version (Windows)    TestScript prog = "exit %~1";
-    else version (Posix) TestScript prog = "exit $1";
+    version (Windows)    auto prog = "exit %~1".testScript;
+    else version (Posix) auto prog = "exit $1".testScript;
     assert(wait(spawnProcess([prog.path, "0"])) == 0);
     assert(wait(spawnProcess([prog.path, "123"])) == 123);
     auto pid = spawnProcess([prog.path, "10"]);
@@ -1833,13 +1837,13 @@ void kill(Pid pid, int codeOrSignal)
     // The test script goes into an infinite loop.
     version (Windows)
     {
-        TestScript prog = ":loop
-                           goto loop";
+        auto prog = ":loop
+                     goto loop".testScript;
     }
     else version (Posix)
     {
         import core.sys.posix.signal : SIGTERM, SIGKILL;
-        TestScript prog = "while true; do sleep 1; done";
+        auto prog = "while true; do sleep 1; done".testScript;
     }
     auto pid = spawnProcess(prog.path);
     // Android appears to automatically kill sleeping processes very quickly,
@@ -1869,7 +1873,7 @@ void kill(Pid pid, int codeOrSignal)
 {
     import core.thread;
     import std.exception : assertThrown;
-    TestScript prog = "exit 0";
+    auto prog = "exit 0".testScript;
     auto pid = spawnProcess([prog.path], null, Config.detached);
     /*
     This sleep is needed because we can't wait() for detached process to end
@@ -2257,7 +2261,7 @@ enum Redirect
 @system unittest
 {
     import std.string;
-    version (Windows) TestScript prog =
+    version (Windows) auto prog =
        "call :sub %~1 %~2 0
         call :sub %~1 %~2 1
         call :sub %~1 %~2 2
@@ -2268,15 +2272,15 @@ enum Redirect
         set /p INPUT=
         if -%INPUT%-==-stop- ( exit %~3 )
         echo %INPUT% %~1
-        echo %INPUT% %~2 1>&2";
-    else version (Posix) TestScript prog =
+        echo %INPUT% %~2 1>&2".testScript;
+    else version (Posix) auto prog =
        `for EXITCODE in 0 1 2 3; do
             read INPUT
             if test "$INPUT" = stop; then break; fi
             echo "$INPUT $1"
             echo "$INPUT $2" >&2
         done
-        exit $EXITCODE`;
+        exit $EXITCODE`.testScript;
     auto pp = pipeProcess([prog.path, "bar", "baz"]);
     pp.stdin.writeln("foo");
     pp.stdin.flush();
@@ -2314,7 +2318,7 @@ enum Redirect
 @system unittest
 {
     import std.exception : assertThrown;
-    TestScript prog = "exit 0";
+    auto prog = "exit 0".testScript;
     assertThrown!StdioException(pipeProcess(
         prog.path,
         Redirect.stdout | Redirect.stdoutToStderr));
@@ -2540,18 +2544,18 @@ private auto executeImpl(alias pipeFunc, Cmd, ExtraPipeFuncArgs...)(
     import std.string;
     // To avoid printing the newline characters, we use the echo|set trick on
     // Windows, and printf on POSIX (neither echo -n nor echo \c are portable).
-    version (Windows) TestScript prog =
+    version (Windows) auto prog =
        "echo|set /p=%~1
         echo|set /p=%~2 1>&2
-        exit 123";
-    else version (Android) TestScript prog =
+        exit 123".testScript;
+    else version (Android) auto prog =
        `echo -n $1
         echo -n $2 >&2
-        exit 123`;
-    else version (Posix) TestScript prog =
+        exit 123`.testScript;
+    else version (Posix) auto prog =
        `printf '%s' $1
         printf '%s' $2 >&2
-        exit 123`;
+        exit 123`.testScript;
     auto r = execute([prog.path, "foo", "bar"]);
     assert(r.status == 123);
     assert(r.output.stripRight() == "foobar");
@@ -2734,51 +2738,60 @@ version (Windows) private immutable string shellSwitch = "/C";
 // file. On Windows the file name gets a .cmd extension, while on
 // POSIX its executable permission bit is set.  The file is
 // automatically deleted when the object goes out of scope.
+//
+// Note: This was changed from a global struct to an IFTI function to avoid
+// extra imports when importing from outside Phobos.
 version(unittest)
-private struct TestScript
+auto testScript()(string code)
 {
-    this(string code) @system
+    static struct TestScriptImpl
     {
-        // @system due to chmod
-        import std.ascii : newline;
-        import std.file : write;
-        version (Windows)
+        this(string code) @system
         {
-            auto ext = ".cmd";
-            auto firstLine = "@echo off";
-        }
-        else version (Posix)
-        {
-            auto ext = "";
-            auto firstLine = "#!" ~ nativeShell;
-        }
-        path = uniqueTempPath()~ext;
-        write(path, firstLine ~ newline ~ code ~ newline);
-        version (Posix)
-        {
-            import core.sys.posix.sys.stat : chmod;
-            chmod(path.tempCString(), octal!777);
-        }
-    }
-
-    ~this()
-    {
-        import std.file : remove, exists;
-        if (!path.empty && exists(path))
-        {
-            try { remove(path); }
-            catch (Exception e)
+            // @system due to chmod
+            import std.ascii : newline;
+            import std.file : write;
+            version (Windows)
             {
-                debug std.stdio.stderr.writeln(e.msg);
+                auto ext = ".cmd";
+                auto firstLine = "@echo off";
+            }
+            else version (Posix)
+            {
+                auto ext = "";
+                auto firstLine = "#!" ~ nativeShell;
+            }
+            path = uniqueTempPath()~ext;
+            write(path, firstLine ~ newline ~ code ~ newline);
+            version (Posix)
+            {
+                import core.sys.posix.sys.stat : chmod;
+                import std.conv: octal;
+                chmod(path.tempCString(), octal!777);
             }
         }
+
+        ~this()
+        {
+            import std.file : remove, exists;
+            if (!path.empty && exists(path))
+            {
+                try { remove(path); }
+                catch (Exception e)
+                {
+                    debug std.stdio.stderr.writeln(e.msg);
+                }
+            }
+        }
+
+        string path;
     }
 
-    string path;
+    return TestScriptImpl(code);
 }
 
 version(unittest)
-private string uniqueTempPath() @safe
+private string uniqueTempPath()() @safe
 {
     import std.file : tempDir;
     import std.path : buildPath;
@@ -3078,13 +3091,13 @@ if (is(typeof(allocator(size_t.init)[0] = char.init)))
 
 version(Windows) version(unittest)
 {
-    import core.stdc.stddef;
+    /*import core.stdc.stddef;
     import core.stdc.wchar_ : wcslen;
     import core.sys.windows.shellapi : CommandLineToArgvW;
     import core.sys.windows.windows;
-    import std.array;
+    import std.array;*/
 
-    string[] parseCommandLine(string line)
+    string[] parseCommandLine()(string line)
     {
         import std.algorithm.iteration : map;
         import std.array : array;
@@ -3762,10 +3775,10 @@ version (Posix)
 {
     import core.sys.posix.stdlib;
 }
-version(unittest)
+/*version(unittest)
 {
     import std.conv, std.file, std.random;
-}
+}*/
 
 
 private void toAStringz(in string[] a, const(char)**az)

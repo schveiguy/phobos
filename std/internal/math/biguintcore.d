@@ -1337,30 +1337,24 @@ int highestPowerBelowUlongMax(uint x) pure nothrow @safe
      return 2;
 }
 
-version(unittest)
-{
-
-int slowHighestPowerBelowUintMax(uint x) pure nothrow @safe
-{
-     int pwr = 1;
-     for (ulong q = x;x*q < cast(ulong) uint.max; )
-     {
-         q*=x; ++pwr;
-     }
-     return pwr;
-}
-
 @safe pure unittest
 {
+    static int slowHighestPowerBelowUintMax(uint x) pure nothrow @safe
+    {
+        int pwr = 1;
+        for (ulong q = x;x*q < cast(ulong) uint.max; )
+        {
+            q*=x; ++pwr;
+        }
+        return pwr;
+    }
+
     assert(highestPowerBelowUintMax(10)==9);
     for (int k=82; k<88; ++k)
     {
         assert(highestPowerBelowUintMax(k)== slowHighestPowerBelowUintMax(k));
     }
 }
-
-}
-
 
 /*  General unsigned subtraction routine for bigints.
  *  Sets result = x - y. If the result is negative, negative will be true.

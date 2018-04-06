@@ -118,10 +118,11 @@ else version(D_InlineAsm_X86_64)
 version(LittleEndian) import core.bitop : bswap;
 
 
-version(unittest)
+// Note: we no longer import inside version(unittest)
+/+version(unittest)
 {
     import std.exception;
-}
+}+/
 
 
 public import std.digest;
@@ -1252,6 +1253,7 @@ alias SHA512_256Digest = WrapperDigest!SHA512_256; ///ditto
 @system unittest
 {
     import std.conv : hexString;
+    import std.exception;
     auto sha = new SHA1Digest();
 
     sha.put(cast(ubyte[])"abcdef");

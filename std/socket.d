@@ -120,16 +120,18 @@ else
     static assert(0);     // No socket support yet.
 }
 
-version(unittest)
+unittest
 {
     static assert(is(uint32_t == uint));
     static assert(is(uint16_t == ushort));
+}
 
-    import std.stdio : writefln;
-
+version(unittest)
+{
     // Print a message on exception instead of failing the unittest.
-    private void softUnittest(void delegate() @safe test, int line = __LINE__) @trusted
+    private void softUnittest()(void delegate() @safe test, int line = __LINE__) @trusted
     {
+        import std.stdio : writefln;
         try
             test();
         catch (Throwable e)
@@ -555,6 +557,7 @@ class Service
 
 @safe unittest
 {
+    import std.stdio: writefln;
     softUnittest({
         Service serv = new Service;
         if (serv.getServiceByName("epmap", "tcp"))

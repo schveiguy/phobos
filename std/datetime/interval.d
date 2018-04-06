@@ -41,7 +41,8 @@ import std.range.primitives : isOutputRange;
 import std.traits : isIntegral, Unqual;
 import std.typecons : Flag;
 
-version(unittest) import std.exception : assertThrown;
+// Note: we no longer import inside version(unittest)
+//version(unittest) import std.exception : assertThrown;
 
 
 /++
@@ -1610,6 +1611,7 @@ private:
     import std.datetime.date;
     import std.datetime.systime;
 
+    import std.exception : assertThrown;
     assertThrown!DateTimeException(Interval!Date(Date(2010, 1, 1), Date(1, 1, 1)));
 
     Interval!Date(Date.init, Date.init);
@@ -1718,6 +1720,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -1750,6 +1753,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -1852,6 +1856,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -1884,6 +1889,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -1987,6 +1993,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -2019,6 +2026,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -2121,6 +2129,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -2225,6 +2234,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -2365,6 +2375,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -2474,6 +2485,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -2619,6 +2631,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -2754,6 +2767,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
 
@@ -2793,6 +2807,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     {
         auto interval = Interval!Date(Date(2010, 7, 4), Date(2012, 1, 7));
@@ -2847,6 +2862,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto interval = Interval!Date(Date(2000, 7, 4), Date(2012, 1, 7));
 
@@ -2887,6 +2903,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     {
         auto interval = Interval!Date(Date(2000, 7, 4), Date(2012, 1, 7));
@@ -2998,6 +3015,7 @@ private:
 @system unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     {
         auto interval = Interval!Date(Date(2010, 9, 19), Date(2010, 9, 21));
@@ -3066,6 +3084,7 @@ private:
 @system unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     {
         auto interval = Interval!Date(Date(2010, 9, 19), Date(2010, 9, 21));
@@ -4255,6 +4274,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 7, 4));
 
@@ -4380,6 +4400,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 7, 4));
 
@@ -4504,6 +4525,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 7, 4));
 
@@ -4601,6 +4623,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 7, 4));
 
@@ -4698,6 +4721,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 7, 4));
 
@@ -4816,6 +4840,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 7, 4));
 
@@ -4912,6 +4937,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 7, 4));
 
@@ -5021,6 +5047,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 7, 4));
 
@@ -5290,6 +5317,7 @@ private:
 @system unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto posInfInterval = PosInfInterval!Date(Date(2010, 9, 19));
 
@@ -6475,6 +6503,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -6601,6 +6630,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -6723,6 +6753,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -6824,6 +6855,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -6921,6 +6953,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -7039,6 +7072,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -7137,6 +7171,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -7246,6 +7281,7 @@ private:
 @safe unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -7520,6 +7556,7 @@ private:
 @system unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     auto negInfInterval = NegInfInterval!Date(Date(2012, 1, 7));
 
@@ -8391,6 +8428,7 @@ private:
 @system unittest
 {
     import std.datetime.date;
+    import std.exception : assertThrown;
 
     //fwd
     {
@@ -8434,6 +8472,7 @@ private:
 {
     import std.datetime.date;
     import std.range.primitives : walkLength;
+    import std.exception : assertThrown;
 
     //fwd
     {
