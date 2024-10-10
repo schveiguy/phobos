@@ -366,7 +366,7 @@ $(ROOT)/$(SONAME): $(LIBSO)
 
 $(LIBSO): override PIC:=-fPIC
 $(LIBSO): $(C_OBJS) $(ALL_D_FILES) $(DRUNTIMESO)
-	$(DMD) $(DFLAGS) -shared $(NODEFAULTLIB) -of$@ -L-soname=$(SONAME) $(DRUNTIMESO) $(LINKDL) $(D_FILES) $(C_OBJS)
+	$(DMD) $(DFLAGS) -shared $(NODEFAULTLIB) -of$@ -L-soname=$(SONAME) $(DRUNTIMESO) $(LINKDL) $(D_FILES) $(C_OBJS) ../sdc/lib/libdmdalloc.a
 
 ifeq (osx,$(OS))
 # Build fat library that combines the 32 bit and the 64 bit libraries
